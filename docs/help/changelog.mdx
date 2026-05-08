@@ -3,6 +3,32 @@ title: "Changelog"
 description: "Product updates and release history"
 ---
 
+<Update label="0.2.5 — May 2026" description="Native Figma measurement overlays restored in create-structure with high-fidelity preview rendering">
+  ## uspec-skills 0.2.5
+
+  The `create-structure` skill restores native Figma measurement overlays on its preview instances and renders previews with full slot content and recursive boolean state. This closes the loop on the temporary pause from V1.6.0 — the Figma MCP `use_figma` tool now supports `page.addMeasurement(...)`, so measurement lines appear directly on the canvas alongside table-driven token rows. No edits to `create-component-md`; this is a rendering-layer patch.
+
+  ### Native canvas measurements (Structure)
+
+  - Step 11c emits `page.addMeasurement(...)` for the allow-listed auto-layout properties documented in the section table: `paddingTop` / `paddingRight` / `paddingBottom` / `paddingLeft`, `itemSpacing`, `minWidth` / `maxWidth`, and `minHeight` / `maxHeight`. Other properties (corner radius, typography, color) remain table-only by design
+  - Token-bound rows pass the token name as `freeText` so the measurement label reads as the token, not just the resolved pixel value. Hardcoded rows render Figma's default numeric label. Min/max constraints render with a `"min N"` / `"max N"` prefix
+  - Per-instance idempotency is provided by `getMeasurementsForNode(...)` + `deleteMeasurement(...)` before each annotation pass, so re-running a section never duplicates overlays
+  - Both `figma-console` (`figma_execute`) and `figma-mcp` (`use_figma`) execute the identical script — no MCP-specific branching
+
+  ### Preview fidelity (Structure)
+
+  - **Slot content previews** now nest the preferred component instance into the actual `SLOT` node inside the preview, so the slot region renders with real content instead of an empty placeholder. If `appendChild` fails (for example in a read-only context), the preview falls back to a 0.6-opacity ghost overlay positioned at the slot bbox
+  - **Recursive boolean enabling** reaches every nested instance in the preview except inside boolean-toggled sections, so optional children documented in the table actually appear in the rendered preview
+  - Step 12 verification adds a `measurementCount` / `plannedColumns` contract check on the value returned by Step 11c. Measurement overlays are a canvas layer that does not appear in `figma_take_screenshot` / `get_screenshot` output, so visual screenshot review is no longer the source of truth for measurement coverage
+
+  ### Documentation
+
+  - `references/structure/agent-structure-instruction.md` adds a Canvas Measurements subsection covering the allow-list, `freeText` semantics, annotation scope, and the screenshot caveat
+  - `implementation.md` documents the render-time slot nesting and canvas measurement architecture parallel to the existing marker positioning notes
+
+  Run `npx uspec-skills update` to pick up the change. No action needed on Figma libraries.
+</Update>
+
 <Update label="V2.1.1 — May 2026" description="Standardize transient state naming on past-participle form (hovered)">
   ## uSpec V2.1.1
 
