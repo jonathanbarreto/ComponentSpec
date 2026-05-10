@@ -3,6 +3,35 @@ title: "Changelog"
 description: "Product updates and release history"
 ---
 
+<Update label="V2.1.2 — May 2026" description="create-structure padding measurement overlays now match autolayout values on cross-axis-centered children">
+  ## uSpec V2.1.2
+
+  The `create-structure` skill now picks the right anchor child when drawing native Figma measurement overlays for hardcoded padding rows, so canvas labels match the autolayout values documented in the table — even when other children are HUG-sized and centered along the cross axis. This corrects a divergence introduced when the measurement overlays were restored in V2.1 (`uspec-skills` 0.2.5).
+
+  ### Why the labels could disagree with the table (Structure)
+
+  - Hardcoded padding rows draw a measurement line whose pixel length is what Figma renders as the label. Until V2.1.2 the line always anchored to the first or last visible child, so on a horizontal capsule with `counterAxisAlignItems: CENTER` and HUG-sized children the line measured the centering offset rather than the autolayout padding
+  - Token-bound padding rows were unaffected — `freeText` carries the token name regardless of geometry — and gap / `itemSpacing` rows were unaffected because consecutive children sit edge-to-edge with the gap by definition. Only **hardcoded counter-axis padding** rows misread
+
+  ### Padding anchor rule (Structure)
+
+  - The Step 11c annotation script now picks the child whose edge sits on the container's inner-content edge for that side (within a 0.5-px epsilon of `paddingTop` / `paddingBottom` / `paddingLeft` / `paddingRight`) and draws the line against that child. Figma's default numeric label then matches the autolayout value the table documents
+  - When no child aligns to that edge, the line falls back to the first/last visible child but carries a `freeText` override of the autolayout value so the label still matches the table
+  - Implemented inline as a new `findEdgeAnchor` helper above `annotate`; no per-row configuration is required
+
+  ### Documentation (`uspec-skills` 0.2.6)
+
+  - `references/structure/agent-structure-instruction.md` splits the `freeText` policy bullet into "hardcoded padding row" (anchor + fallback) vs "hardcoded gap/itemSpacing row" (default label) so the contract the agent reads matches what the SKILL implements
+  - `implementation.md` updates the "Canvas measurements (Structure)" architecture summary to describe the anchor + `freeText`-fallback policy
+
+  ### Scope
+
+  - No changes to extraction, plan-building, table contents, or the markdown spec
+  - Already-rendered Figma structure specs keep their old labels until they are explicitly re-annotated; the fix changes only future runs and any explicit re-annotation pass
+
+  Run `npx uspec-skills update` to pick up the fix. No action needed on Figma libraries.
+</Update>
+
 <Update label="0.2.5 — May 2026" description="Native Figma measurement overlays restored in create-structure with high-fidelity preview rendering">
   ## uspec-skills 0.2.5
 

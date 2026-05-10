@@ -175,7 +175,8 @@ The standalone `create-structure` skill draws native Figma measurement overlays 
 
 **`freeText` policy:**
 - Token-bound row → `freeText` shows the token name on the line (e.g. `spacing-md`); the table beside it shows the resolved value.
-- Hardcoded row → no `freeText`; Figma's default numeric label shows through (the measured pixel value).
+- Hardcoded padding row → the line is anchored to the child whose edge sits on the container's inner-content edge for that side (within a 0.5-px epsilon of `paddingTop` / `paddingBottom` / `paddingLeft` / `paddingRight`), so Figma's default numeric label naturally matches the autolayout value the table documents — even when other children are HUG-sized and centered along the cross-axis. When no child aligns to that edge, the line falls back to the first/last visible child with a `freeText` override carrying the autolayout value so the label still matches the table.
+- Hardcoded gap / `itemSpacing` row → no `freeText`; Figma's default numeric label shows through (consecutive children sit edge-to-edge with the gap by definition, so the measured pixel value matches).
 - Min / max constraints → `freeText: "min N"` / `"max N"` so the line distinguishes a constraint from the actual measured size.
 
 **Annotation scope:**

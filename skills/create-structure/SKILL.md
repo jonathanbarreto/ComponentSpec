@@ -1278,6 +1278,8 @@ Each entry is `{ token: string|null }`. `token` is the variable name when the ro
 
 If `annotationPlan[i]` is empty for every column (e.g., a shape-only or typography-only section), 11c draws nothing and `measurementCount` is `0` by design. That is the correct outcome.
 
+**Padding anchor rule (mandatory):** Padding rows are drawn between the container edge and the **child whose edge sits on the container's inner-content edge for that side** (within a 0.5-px epsilon of `paddingTop` / `paddingBottom` / `paddingLeft` / `paddingRight`). This guarantees the line length — and therefore Figma's default numeric label — equals the autolayout value the table documents, even when other children are HUG-sized and centered along the cross-axis. If no child aligns to that edge, the line is drawn against the first/last visible child with a `freeText` override carrying the autolayout value so the label still matches the table. The Step 11c `annotate` function implements this via `findEdgeAnchor`; no per-row configuration is required.
+
 **Annotation scope (`ANNOTATE_SCOPE`):**
 
 - `"rootOnly"` for variant / density / shape / composition / behavior / state-conditional / boolean-toggled sections (the table documents the root container's own auto-layout settings).
@@ -1683,6 +1685,35 @@ if (SLOT_POPULATION && SLOT_POPULATION.slotName) {
   }
 }
 
+function findEdgeAnchor(container, side, kids) {
+  if (!kids || kids.length === 0) return null;
+  const EPS = 0.5;
+  let pTop = 0, pBottom = 0, pLeft = 0, pRight = 0;
+  try { pTop = Number(container.paddingTop) || 0; } catch {}
+  try { pBottom = Number(container.paddingBottom) || 0; } catch {}
+  try { pLeft = Number(container.paddingLeft) || 0; } catch {}
+  try { pRight = Number(container.paddingRight) || 0; } catch {}
+  let cw = 0, ch = 0;
+  try { cw = Number(container.width) || 0; } catch {}
+  try { ch = Number(container.height) || 0; } catch {}
+  const innerTop = pTop;
+  const innerBottom = ch - pBottom;
+  const innerLeft = pLeft;
+  const innerRight = cw - pRight;
+  for (const k of kids) {
+    let kx = 0, ky = 0, kw = 0, kh = 0;
+    try { kx = Number(k.x) || 0; } catch {}
+    try { ky = Number(k.y) || 0; } catch {}
+    try { kw = Number(k.width) || 0; } catch {}
+    try { kh = Number(k.height) || 0; } catch {}
+    if (side === 'TOP'    && Math.abs(ky - innerTop) <= EPS) return k;
+    if (side === 'BOTTOM' && Math.abs((ky + kh) - innerBottom) <= EPS) return k;
+    if (side === 'LEFT'   && Math.abs(kx - innerLeft) <= EPS) return k;
+    if (side === 'RIGHT'  && Math.abs((kx + kw) - innerRight) <= EPS) return k;
+  }
+  return null;
+}
+
 function annotate(node, plan, isRoot, scope) {
   if (!node.visible) return 0;
   let count = 0;
@@ -1691,17 +1722,32 @@ function annotate(node, plan, isRoot, scope) {
   const first = kids[0], last = kids[kids.length - 1];
 
   if (isAuto && first) {
-    const sides = [
-      ['paddingTop',    { node: node, side: 'TOP'    }, { node: first, side: 'TOP'    }],
-      ['paddingBottom', { node: last, side: 'BOTTOM' }, { node: node, side: 'BOTTOM' }],
-      ['paddingStart',  { node: node, side: 'LEFT'   }, { node: first, side: 'LEFT'   }],
-      ['paddingEnd',    { node: last, side: 'RIGHT'  }, { node: node, side: 'RIGHT'  }],
+    const sideToProp = { TOP: 'paddingTop', BOTTOM: 'paddingBottom', LEFT: 'paddingLeft', RIGHT: 'paddingRight' };
+    const paddingSides = [
+      { key: 'paddingTop',    side: 'TOP',    fallback: first },
+      { key: 'paddingBottom', side: 'BOTTOM', fallback: last  },
+      { key: 'paddingStart',  side: 'LEFT',   fallback: first },
+      { key: 'paddingEnd',    side: 'RIGHT',  fallback: last  },
     ];
-    for (const [key, start, end] of sides) {
+    for (const { key, side, fallback } of paddingSides) {
       const entry = plan && plan[key];
       if (!entry) continue;
-      const opts = entry.token ? { freeText: entry.token } : undefined;
-      try { page.addMeasurement(start, end, opts); count++; } catch {}
+      const anchor = findEdgeAnchor(node, side, kids);
+      const child = anchor || fallback;
+      let from, to;
+      if (side === 'TOP')         { from = { node: node,  side: 'TOP'    }; to = { node: child, side: 'TOP'    }; }
+      else if (side === 'BOTTOM') { from = { node: child, side: 'BOTTOM' }; to = { node: node,  side: 'BOTTOM' }; }
+      else if (side === 'LEFT')   { from = { node: node,  side: 'LEFT'   }; to = { node: child, side: 'LEFT'   }; }
+      else                        { from = { node: child, side: 'RIGHT'  }; to = { node: node,  side: 'RIGHT'  }; }
+      let opts;
+      if (entry.token) {
+        opts = { freeText: entry.token };
+      } else if (!anchor) {
+        let autoVal = 0;
+        try { autoVal = Number(node[sideToProp[side]]) || 0; } catch {}
+        opts = { freeText: String(Math.round(autoVal)) };
+      }
+      try { page.addMeasurement(from, to, opts); count++; } catch {}
     }
 
     const gapEntry = plan && plan.itemSpacing;
@@ -1793,6 +1839,6 @@ Structure spec complete: https://www.figma.com/design/{fileKey}/?node-id={frameI
 - The target node can be either a `COMPONENT_SET` (multi-variant) or a standalone `COMPONENT` (single variant). The extraction script detects the type and returns `isComponentSet` accordingly. When the node is a standalone component, it is treated as a single-entry variants array and there are no variant axes. Preview instance creation in Step 11c uses `compNode.createInstance()` directly for standalone components.
 - Dynamic columns: The `#variant-value` template in the header row and `#property-value-cell` in each data row are cloned once per value column, then the original template is removed. Clones are inserted before the Notes column to maintain correct column order. All value columns and the Notes column use `layoutSizingHorizontal = 'FILL'` so Figma's auto-layout distributes width equally across them.
 - Each section is rendered in a separate `figma_execute` call to avoid timeouts.
-- **Native canvas measurements:** Step 11c annotates each preview instance with native Figma measurement overlays via `page.addMeasurement(...)`. Annotation is gated by the section's table — only properties present in `ANNOTATION_PLAN` (paddings, gap/itemSpacing, min/max width/height) are drawn. Token-bound rows render the token name on the line via `freeText`; hardcoded rows let Figma's default numeric label show through; min/max constraints render with a `"min N"` / `"max N"` prefix. Per-instance idempotency is provided by `getMeasurementsForNode` + `deleteMeasurement` before each annotation pass. Both `figma-console` (`figma_execute`) and `figma-mcp` (`use_figma`) execute the identical JS — no MCP-specific branch is needed. Measurements are a canvas overlay and do NOT appear in screenshot output; verify via the `measurementCount` / `plannedColumns` returned by Step 11c.
+- **Native canvas measurements:** Step 11c annotates each preview instance with native Figma measurement overlays via `page.addMeasurement(...)`. Annotation is gated by the section's table — only properties present in `ANNOTATION_PLAN` (paddings, gap/itemSpacing, min/max width/height) are drawn. Token-bound rows render the token name on the line via `freeText`. Hardcoded padding rows are anchored to the child whose edge sits on the container's inner-content edge for that side (computed from the container's autolayout paddings), so Figma's default numeric label naturally matches the autolayout value the table documents. When no child aligns to that edge — e.g., a horizontal capsule whose children are HUG-sized and `counterAxisAlignItems=CENTER` — the line falls back to the first/last visible child but carries a `freeText` override of the autolayout value so the label still matches the table. Hardcoded gap/itemSpacing rows continue to let Figma's default numeric label show through (consecutive children sit edge-to-edge with the gap by definition). Min/max constraints render with a `"min N"` / `"max N"` prefix. Per-instance idempotency is provided by `getMeasurementsForNode` + `deleteMeasurement` before each annotation pass. Both `figma-console` (`figma_execute`) and `figma-mcp` (`use_figma`) execute the identical JS — no MCP-specific branch is needed. Measurements are a canvas overlay and do NOT appear in screenshot output; verify via the `measurementCount` / `plannedColumns` returned by Step 11c.
 - **Slot content preview faithfulness:** `slotContent` previews source the parent component at each column's parent size and use `slotNode.appendChild()` to nest the preferred component inside the actual SLOT node (mirrors the slot-nesting pattern used in {{skill:create-anatomy}}). This makes the preview a faithful reference for the table — the SLOT's contextual padding, sizing, and spacing are live in the inst tree, so canvas measurements correctly reflect the slot-imposed values. Ghost-overlay fallback (0.6 opacity at the slot's bbox) handles the rare case where `appendChild` fails; annotation is skipped for that column when ghost fallback fires.
 - **Recursive nested-boolean enable:** Every section type except `boolean-toggled` runs a recursive walker after `createInstance` + `setProperties` that enables every BOOLEAN property on every nested INSTANCE (mirrors the equivalent walker in {{skill:create-color}}). This guarantees that any optional child documented in the section's table is visible in the preview, even when it's gated by a sub-component's own boolean (e.g., a Label's "Show character count" inside a Text Field's Size section). Boolean-toggled sections are excluded so their per-column `PROPERTY_OVERRIDES` remains authoritative.
