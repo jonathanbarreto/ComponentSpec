@@ -840,6 +840,7 @@ Both the extraction and cross-variant data provide pre-formatted `display` strin
 - Use inconsistent property naming (stick to camelCase)
 - Show only the token name without the resolved value — always include both: `"token-name (value)"`
 - Show only the value when a semantic token is used — engineers need to know which token to reference
+- Put Figma node IDs, internal extraction artifacts, or `TODO: confirm with Figma`-style stubs in `Notes` columns — the rendered frame is engineer-facing; `Notes` is for implementation context only. If you cannot confirm a value, skip the row or surface the gap in the `generalNotes` chat diagnostic, not in the table
 
 ---
 
