@@ -3,6 +3,54 @@ title: "Changelog"
 description: "Product updates and release history"
 ---
 
+<Update label="V2.2 — May 2026" description="Render-meta JSON appendix for component-md, layer-identity stamping in extract-structure, borderWidth/borderAlign row pair, and Figma plugin 2.3.0 with node-id stamping and boolean-gated layer fallback">
+  ## uSpec V2.2
+
+  Component Markdown specs now ship with a machine-readable render-meta appendix, structure extraction stamps Figma layer identity on every section and group header, and border rows are emitted as a `borderWidth` + `borderAlign` pair. The release ships a new Figma plugin (`uspec-extract` 2.3.0) that stamps Figma node ids on every walk entry, captures `strokeAlign`, and resolves boolean-gated layers even when they're absent from the default variant. Two follow-up fixes to the structure skill (revert to unified flow, gate `borderWidth` on a painted stroke, forbid node-id / TODO stubs in Notes) ship in the same release.
+
+  ### Render-meta appendix in Component Markdown
+
+  - The `component-md` template gains a fenced JSON block delimited by `<!-- render-meta:start v=1 -->` / `<!-- render-meta:end -->` carrying machine-readable component metadata: `schemaVersion`, `extractedAt`, `sourceHash`, `fileKey`, `nodeId`, `component`, `variantAxes` / `variantAxesDefaults`, `propertyDefs`, `booleanDefs`, `subComponents`, `slotContents`, `sectionTargets`, `groupTargets`
+  - Downstream `create-*` skills (structure, color, anatomy, property, …) read this block to resolve sections, row-groups, and boolean-gated layers back to live Figma layers — no more fuzzy name matching against `layoutTree` and no need to re-extract through MCP
+  - `schemaVersion` is pinned at `"1.0"` for V2.2; future breaking changes will bump it. `sourceHash` is a SHA-256 of the underlying `_base.json` so consumers can detect drift between the `.md` and the extraction it was rendered from
+  - The block is **mechanical pass-through** of `_base.json` and the structure cache — no interpretation, no synthesis. Two `create-component-md` runs against the same `_base.json` produce byte-identical render-meta
+
+  ### Layer identity stamped on structure output
+
+  - `extract-structure`'s new **R6** rule populates `section._anchor` (`{ layerName, layerId }`) on every section and `row._layerName` / `row._layerId` on every group-header row, reading directly from `_base.json.variants[<default>].layoutTree`
+  - Composition sections anchor to the variant root with `layerName: "__root__"`; sub-component sections anchor to the in-context INSTANCE node (NOT the canonical `subCompSetId`, which is already covered by render-meta `subComponents[]`); slot-content sections anchor to the slot's host frame; zone-specific sections anchor to the named FRAME
+  - Group-header rows (any row where `isSubProperty !== true` AND `spec` is a zone descriptor, not a property family) carry the literal Figma layer name and node id. Layers present only in `revealedByVariantName[*]` (e.g., a `clear button` parked under `state=active`) emit `_layerId: null` with an explanatory `notes` entry — the row is still present, just unpinned
+  - The `create-component-md` orchestrator now reads these fields directly into render-meta. A legacy fallback (name-walk against `layoutTree`) covers caches produced before this release; re-running `extract-structure` is recommended to regenerate the cache with the new fields
+
+  ### `borderWidth` + `borderAlign` row pair
+
+  - Whenever a `borderWidth` row is queued (gate: `strokePaintToken != null`), a sibling `borderAlign` row is queued from `dimensions.strokeAlign.display` (`inside` / `outside` / `center`). The two rows share the same gate — emit both, or neither
+  - The coverage matrix (`_extractionArtifacts.coverageMatrix`) accepts `borderAlign` as a first-class family alongside `borderWidth`, with identical R4/R5 detection rules
+  - Legacy fallback: when `dimensions.strokeAlign` is absent from a `_base.json` produced by a pre-2.3.0 plugin build, `borderAlign` emits as `"—"` with `provenance: "not-measured"` and `generalNotes` surfaces a single line recommending re-extraction. No row is silently dropped
+
+  ### Figma plugin 2.3.0 (`uspec-extract`)
+
+  - **Boolean-gated layer fallback (Phase A).** Boolean property → gated layer resolution now walks `componentPropertyReferences.visible` instead of relying on the default variant's `componentProperties` keys. When the gated layer is absent from the default variant (e.g., a "clear" button that only appears when input is active), the resolver falls back to scanning every sibling variant in the COMPONENT_SET. First match wins; the resulting `associatedLayerId` is canonical and downstream-consumable
+  - **`strokeAlign` capture (Phase E).** `extractDims()` now emits `strokeAlign` as `{ value, token: null, display }` where `value` is the raw Figma enum (`"INSIDE"` / `"OUTSIDE"` / `"CENTER"`) and `display` is the lower-cased prose form. Present on `variants[].dimensions`, `variants[].treeHierarchical[*].dimensions`, and every `subComponentVariantWalks` entry. **Not** on `variants[].revealedTree[*].dimensions` — Phase G uses a minimal `dim()` extractor focused on topology; dimensional ground truth always comes from the baseline `treeHierarchical`
+  - **Node ids on every walk entry.** `treeHierarchical`, `layoutTree`, `treeFlat`, `colorWalk`, `revealedTree`, `revealedColorWalk`, and Phase I's `measureHierarchical` all carry the Figma node `id` (or `nodeId` for color entries) of the source layer. Downstream consumers resolve walk entries back to live layers without name- or path-based search
+  - Rebuild locally to pick up the changes: `cd figma-plugin && npm install && npm run build`, then re-import the manifest in Figma Desktop. The plugin doesn't ship via npm — it's built per-machine
+
+  ### `borderWidth` gate fix and authoring discipline
+
+  - `borderWidth` rows now require `strokeWeight.value > 0`. The extractor emits `strokeWeight: { value: 0 }` for nodes that have the property set but no paint in `node.strokes`; without this gate the agent emitted a phantom `borderWidth: 0` row even though no border is painted on the component
+  - The structure rendering rules now forbid Figma node ids and `TODO: confirm with Figma` stubs in `Notes` columns. Notes is engineer-facing implementation context — when a value cannot be confirmed, skip the row or surface the gap in `generalNotes` rather than leak extraction-time artifacts into the rendered spec
+  - The Mode A / Mode B split, per-group annotation resolver, and cross-variant 4d/4e drivers added on top of V2.1.4's `7d2e7f4` baseline are reverted — they made the workflow brittle without improving output. `create-structure` is back on the unified `rootOnly` / `fullTree` annotation model with cleaner output
+
+  ### Housekeeping
+
+  - `maintaining.md` updated for npm's current **web-based 2FA** flow — `npm publish` now opens a browser tab for approval and no longer requires `--otp=…`. The authenticator-app fallback is documented for accounts not on web-based 2FA
+  - New root-level `.npmrc` mirrors `packages/cli/.npmrc` and pins the registry to public npm at the repo level. The layered registry safety (publish config + `.npmrc` + prepublish guard) still aborts mis-pointed publishes with a clear error
+  - `utils/README.md` removed (`utils/` is no longer a meaningful directory in the repo)
+  - `README.md` and `implementation.md` prose tightened — the canvas-measurements paragraph now documents the `rootOnly` vs `fullTree` annotation policy explicitly and the new `{ success, plannedColumns }` return semantics
+
+  Run `npx uspec-skills update` to pick up the skill changes. To get the new Figma plugin behaviour, rebuild `figma-plugin/` locally and re-import the manifest in Figma Desktop. No action needed on existing Figma libraries.
+</Update>
+
 <Update label="V2.1.4 — May 2026" description="create-structure accepts an authoritative .md input, ships an explicit reasoning-discipline contract, gates borderWidth on strokePaintToken, and adds use_figma string-escaping guidance">
   ## uSpec V2.1.4
 

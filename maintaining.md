@@ -122,8 +122,8 @@ npm run build
 # 4. Locally smoke test (optional but recommended) — see
 #    "Smoke testing before publish" section below.
 
-# 5. Publish (will prompt for your npm 2FA code)
-npm publish --access public --otp=YOUR_6_DIGIT_CODE
+# 5. Publish (opens your browser for npm web-based 2FA approval)
+npm publish --access public
 
 # 6. Verify it landed
 npm view uspec-skills version   # should print your new version
@@ -187,7 +187,7 @@ You'll do this every time you ship. This is the canonical sequence.
 ### Prerequisites (one-time)
 
 - An npm account with publish rights to `uspec-skills`. You're `iguisard`.
-- 2FA enabled on your npm account (npm requires it for new publishers by default). The OTP is a 6-digit code from your authenticator app.
+- 2FA enabled on your npm account (npm requires it for new publishers by default). npm uses **web-based 2FA** by default — when you run `npm publish`, it opens a browser tab where you approve the publish. No authenticator code or `--otp` flag is needed.
 - Logged in: `npm whoami --registry=https://registry.npmjs.org/` should print `iguisard`. If it doesn't, run `npm login --registry=https://registry.npmjs.org/`.
 
 ### The publish sequence
@@ -208,8 +208,8 @@ npm publish --dry-run
 #    Verify the output ends with: + uspec-skills@<your-new-version>
 #    and that it lists Publishing to https://registry.npmjs.org/
 
-# 4. Real publish (will prompt for your OTP)
-npm publish --access public --otp=YOUR_6_DIGIT_CODE
+# 4. Real publish (opens your browser for web-based 2FA approval)
+npm publish --access public
 
 # 5. Verify it landed
 npm view uspec-skills version
@@ -305,11 +305,13 @@ npm error code EOTP
 npm error This operation requires a one-time password from your authenticator.
 ```
 
-Your 2FA code expired (they rotate every 30 seconds) or you didn't pass `--otp=...`. Re-run with a fresh code:
+The browser approval window for web-based 2FA expired or was dismissed before you confirmed. Re-run the publish — it will open a fresh approval tab:
 
 ```bash
-npm publish --access public --otp=123456
+npm publish --access public
 ```
+
+If your account is set to authenticator-app 2FA instead of web-based, pass `--otp=<6-digit-code>` from your authenticator on each publish (e.g. `npm publish --access public --otp=123456`).
 
 ### "publish failed with E403 / Forbidden"
 
@@ -331,7 +333,7 @@ cat .npmrc                       # what this folder pins it to
 If `npm config get registry` doesn't print `https://registry.npmjs.org/`, run:
 
 ```bash
-npm publish --access public --registry=https://registry.npmjs.org/ --otp=YOUR_OTP
+npm publish --access public --registry=https://registry.npmjs.org/
 ```
 
 The `--registry` flag overrides everything else for that one command.
@@ -346,7 +348,7 @@ cd packages/cli
 # bump "version" in package.json
 npm run build
 npm publish --dry-run            # sanity check
-npm publish --access public --otp=YOUR_OTP
+npm publish --access public      # opens browser for web-based 2FA approval
 npm view uspec-skills version    # verify
 ```
 

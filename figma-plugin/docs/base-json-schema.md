@@ -122,13 +122,13 @@ Downstream interpretation skills (`extract-api`, `extract-structure`, `extract-c
       "id": "<variantId>",
       "name": "<variant name>",
       "variantProperties": { "<axis>": "<value>" },
-      "dimensions": { /* collapsed {value, token, display} per extractDims */ },
-      "layoutTree": { /* structure-style layout tree; see Traversal policy */ },
-      "treeHierarchical": [ /* recursive tree, stops at nested INSTANCE (except top-level); each node: name, type, visible, dimensions, typography?, mainComponentName?, parentSetName?, subCompSetId?, subCompVariantAxes?, booleanOverrides?, children? */ ],
-      "treeFlat": [ /* flat list for voice: index, name, nodeType, visible, bbox, slotIndex? */ ],
-      "colorWalk": [ /* path-qualified color entries; see Traversal policy */ ],
-      "revealedTree": { /* optional; hierarchical walk with all booleans enabled, populated by Phase G */ },
-      "revealedColorWalk": [ /* optional; colorWalk performed on the all-booleans-enabled temp instance, populated by Phase G. Same entry shape as colorWalk. Enables booleanDelta derivation without re-walking Figma. */ ]
+      "dimensions": { /* collapsed {value, token, display} per extractDims. `strokeAlign` is also captured here as `{ value, token: null, display }` where `value` is the raw Figma enum ("INSIDE" | "OUTSIDE" | "CENTER") and `display` is the lower-cased prose form ("inside" | "outside" | "center"); the field is omitted on nodes that don't expose strokeAlign. */ },
+      "layoutTree": { /* structure-style layout tree; see Traversal policy. Each layout node carries `id` (Figma node id) so downstream consumers can resolve auto-layout containers back to live layers without a name-based search. */ },
+      "treeHierarchical": [ /* recursive tree, stops at nested INSTANCE (except top-level); each node: id (Figma node id), name, type, visible, dimensions, typography?, mainComponentName?, parentSetName?, subCompSetId?, subCompVariantAxes?, booleanOverrides?, children? */ ],
+      "treeFlat": [ /* flat list for voice: index, id (Figma node id), name, nodeType, visible, bbox, slotIndex? */ ],
+      "colorWalk": [ /* path-qualified color entries; see Traversal policy. Each entry carries `nodeId` (Figma node id of the source layer) so render-meta and downstream consumers can resolve color tokens back to live layers without a path-based search. */ ],
+      "revealedTree": { /* optional; hierarchical walk with all booleans enabled, populated by Phase G. Same `id` shape as treeHierarchical. */ },
+      "revealedColorWalk": [ /* optional; colorWalk performed on the all-booleans-enabled temp instance, populated by Phase G. Same entry shape as colorWalk (including `nodeId`). Enables booleanDelta derivation without re-walking Figma. */ ]
     }
   ],
 
@@ -182,11 +182,12 @@ Downstream interpretation skills (`extract-api`, `extract-structure`, `extract-c
           "variantProperties": { "<axisName>": "<value>" } /* {} for plain-COMPONENT walks */,
           "dimensions": { /* collapsed {value, token, display} per extractDims, for the variant's root COMPONENT */ },
           "treeHierarchical": {
-            /* recursive walk of the variant's body. Each node carries `name`, `type`,
-               `visible`, `dimensions`, and `children[]`. Recursion stops at nested
-               INSTANCE boundaries (depth >= 1 INSTANCEs are leaves). INSTANCE nodes —
-               including the root when the walk target itself is an INSTANCE, and every
-               nested-instance leaf — additionally carry an `instanceConfig`: */
+            /* recursive walk of the variant's body. Each node carries `id` (Figma node
+               id), `name`, `type`, `visible`, `dimensions`, and `children[]`. Recursion
+               stops at nested INSTANCE boundaries (depth >= 1 INSTANCEs are leaves).
+               INSTANCE nodes — including the root when the walk target itself is an
+               INSTANCE, and every nested-instance leaf — additionally carry an
+               `instanceConfig`: */
             "instanceConfig": {
               "mainComponentId": "<id or null>",
               "mainComponentName": "<string or null>",
@@ -371,6 +372,7 @@ Run after changing the schema or updating any of the plugin phases:
 - [ ] `variables.localCollections` + `remoteCollections` + `resolvedVariables` (with `valuesByMode` including alias chains, and `isFromLibrary: true` on library-sourced entries)
 - [ ] `styles.resolvedStyles` (lazy; only referenced style IDs)
 - [ ] `variants[].dimensions` (collapsed `{value, token, display}`)
+- [ ] `variants[].dimensions.strokeAlign` (when the node exposes a stroke alignment) — `{ value, token: null, display }` where `value` is `"INSIDE" | "OUTSIDE" | "CENTER"` and `display` is the lower-cased prose form. Same shape on every `extractDims()`-sourced `dimensions` blob: `variants[].dimensions` (root), `variants[].treeHierarchical[*].dimensions`, `subComponentVariantWalks.*.variants[*].dimensions` (root + nested). **Not** present on `variants[].revealedTree[*].dimensions` — Phase G uses its own minimal `dim()` extractor (width/height/min/max + padding + layoutMode only) by design; the revealed tree is consumed for *topology* of boolean-gated children, while dimensional ground truth comes from the baseline `treeHierarchical` (which includes `visible: false` children with their geometry intact).
 - [ ] `variants[].treeHierarchical` (structure + api evidence)
 - [ ] `variants[].treeFlat` (voice focus order)
 - [ ] `variants[].colorWalk` (color entries with `path`, `subComponentName`, `compositeDetail` when 2+ layers share a style)

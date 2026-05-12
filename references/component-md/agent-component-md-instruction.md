@@ -52,6 +52,7 @@ The template (`component-md/component-md-template.md`) uses `{{UPPER_SNAKE}}` pl
 | `{{COLOR_BODY}}` | Rendered Color section (see **Color body rendering**) | yes |
 | `{{VOICE_BODY}}` | Rendered Voice section (see **Voice body rendering**) | yes |
 | `{{CROSS_REFERENCES}}` | Deduplicated cross-references (see **Cross-references**) | yes |
+| `{{RENDER_META_JSON}}` | Machine-readable component metadata appendix carrying node IDs (see **RENDER_META_JSON**) | yes |
 
 ## Composition subsection (`{{COMPOSITION_SUBSECTION}}`)
 
@@ -476,6 +477,97 @@ The `{{CROSS_REFERENCES}}` block is a deduplicated map between sections so engin
 
 If none of the above produce bullets, emit `No cross-references detected between sections.` as the only line.
 
+## RENDER_META_JSON
+
+The `{{RENDER_META_JSON}}` placeholder is replaced with a fenced JSON code block that downstream `create-*` skills (`create-structure`, `create-color`, `create-anatomy`, `create-property`, etc.) consume to resolve sections / row-groups / boolean-gated layers back to live Figma layers — without re-extracting through MCP. The block is **mechanical pass-through** of plugin output: no interpretation, no synthesis. The `.md` body above is for engineers; this block is for tooling.
+
+The output the renderer substitutes is exactly:
+
+````
+```json
+{ /* schema below */ }
+```
+````
+
+(A fenced ```` ```json ```` block. The surrounding `<!-- render-meta:start v=1 -->` / `<!-- render-meta:end -->` HTML comments are part of the template, not the placeholder content.)
+
+### Schema (v=1)
+
+| Field | Type | Source | Notes |
+|---|---|---|---|
+| `schemaVersion` | string | constant `"1.0"` | bump only on breaking change |
+| `extractedAt` | string (ISO 8601) | `_base.json._meta.extractedAt` | the plugin's extraction timestamp, not the render timestamp |
+| `sourceHash` | string | `"sha256:" + sha256(JSON.stringify(_base.json))` | computed by the renderer; lets downstream skills detect drift between an `.md` and the underlying `_base.json` they were given |
+| `fileKey` | string | `_base.json._meta.fileKey` | |
+| `nodeId` | string | `_base.json._meta.nodeId` | the parent component-set's node id |
+| `component` | object | `_base.json.component` | shape: `{ componentName, compSetNodeId, isComponentSet }`. Pass through verbatim. |
+| `variantAxes` | object | derived from `_base.json.variantAxes[]` | reshape from `[{ name, options, defaultValue }]` to `{ <axisName>: [<option>, ...] }` for compactness; the defaults move to `variantAxesDefaults` |
+| `variantAxesDefaults` | object | derived from `_base.json.variantAxes[]` | `{ <axisName>: <defaultValue> }` |
+| `propertyDefs` | object | `_base.json.propertyDefinitions.rawDefs` enriched with `associatedLayerId` from `_base.json.propertyDefinitions.booleans[]` | one entry per declared property keyed by raw key (e.g. `"clear button#10225:1"`). Each entry: `{ type, default?, values?, preferredComponentKey?, associatedLayerName?, associatedLayerId? }`. `associatedLayerId` is populated for BOOLEAN entries only (from `propertyDefinitions.booleans[]`). |
+| `booleanDefs` | array | derived from `_base.json.propertyDefinitions.booleans[]` | one entry per boolean: `{ key, default, associatedLayerName, associatedLayerId }`. `associatedLayerId` is canonical and MUST equal the raw `_base.json` value byte-for-byte. |
+| `subComponents` | array | `_base.json._childComposition.children[]` filtered to `classification === "constitutive"` AND `subCompSetId !== null`, joined with `_base.json.subComponentVariantWalks[<subCompSetId>]` when present | one entry per constitutive child: `{ name, mainComponentName, subCompSetId, subCompVariantAxes, subCompVariantAxesDefaults, booleanOverrides }`. `subCompVariantAxesDefaults` is `{}` for plain-COMPONENT walks. |
+| `slotContents` | array | `_base.json.propertyDefinitions.slots[]` (joined with `slotHostGeometry.swapResults` when present) | one entry per declared slot: `{ slotName, slotNodeType, preferredComponents: [{ componentKey, componentName, componentId, componentSetId, isComponentSet, variantAxes, booleanDefs }] }` |
+| `sectionTargets` | object | per-section name → `{ name, nodeId }` | keyed by `sections[].sectionName` from the structure cache. `name` is the live Figma layer name the section is anchored to (or the literal `"__root__"` for sections that wrap the variant root). `nodeId` is the resolved Figma node id. See **Resolution rules** below. |
+| `groupTargets` | object | per-section name → `{ <groupName>: { name, nodeId } }` | one entry per row-group within each section. A row-group is defined by an `isSubProperty: false` row in the structure cache — the row's `spec` is the group name and is also the Figma layer name. See **Resolution rules** below. |
+
+### Population rules
+
+**Source of truth.** `_base.json` is the canonical source for every render-meta field. Do NOT read these fields from `api.json` even where they overlap (notably `subComponents` and `propertyDefs`) — `api.json` is interpreted output and may apply renames or normalize labels; render-meta is mechanical pass-through and must preserve the raw plugin shape so downstream skills can do reliable lookups.
+
+**`booleanDefs[].associatedLayerId`.** Read directly from `_base.json.propertyDefinitions.booleans[].associatedLayerId`. The plugin populates this in [`figma-plugin/src/phaseA.ts`](figma-plugin/src/phaseA.ts) and it is documented in [`figma-plugin/docs/base-json-schema.md`](figma-plugin/docs/base-json-schema.md). Pass through verbatim — `null` when the plugin couldn't resolve the layer.
+
+**`propertyDefs.<rawKey>.associatedLayerId`.** Same source. For non-BOOLEAN property types (VARIANT, INSTANCE_SWAP, SLOT, TEXT, NUMBER), `associatedLayerId` is omitted (the property doesn't pin to a single layer).
+
+**`subComponents`.** Iterate `_base.json._childComposition.children[]`. Keep only entries where `classification === "constitutive"` AND `subCompSetId !== null`. For each kept entry, build:
+
+```ts
+{
+  name: child.name,
+  mainComponentName: child.mainComponentName,
+  subCompSetId: child.subCompSetId,
+  subCompVariantAxes: child.subCompVariantAxes ?? {},
+  subCompVariantAxesDefaults:
+    _base.json.subComponentVariantWalks?.[child.subCompSetId]?.variants?.[0]?.variantProperties ?? {},
+  booleanOverrides: child.booleanOverrides ?? {},
+}
+```
+
+The `[0]` selection for `subCompVariantAxesDefaults` reflects the plugin's invariant: Phase I emits the `(default)` walk first (or, for cross-product walks, the variant-key matching the parent's placement). For `skipped: true` Phase I walks, fall back to `{}` and surface a `medium` Known-gaps entry: `render-meta: subComponentVariantWalks for <name> was skipped (<skippedReason>); subCompVariantAxesDefaults left empty`.
+
+**`sectionTargets[<sectionName>].nodeId` and `groupTargets[<sectionName>][<groupName>].nodeId`.** The structure cache is the authoritative source — `extract-structure` already pinned every section and group-header row to a Figma layer during its `_base.json` walk and stamped the identity onto the cache (see `agent-structure-instruction.md` § **Section anchor** and § **Stamping layer identity on group-header rows**). The renderer's job is mechanical pass-through.
+
+Lookup procedure, in order:
+
+0. **Preferred path — read identity from structure cache.** For each section in the structure cache `data.sections[]`:
+   - If `section._anchor` is present, emit `sectionTargets[<section.sectionName>] = { name: section._anchor.layerName, nodeId: section._anchor.layerId }`. Pass through verbatim — including `"__root__"` for the composition section's sentinel, and `null` for legitimately unresolvable anchors.
+   - For each row in `section.rows[]` where `isSubProperty !== true` AND the row carries `_layerName` + `_layerId`, emit `groupTargets[<section.sectionName>][<row.spec>] = { name: row._layerName, nodeId: row._layerId }`. Skip rows that don't carry the fields (property-family rows like `padding`, `itemSpacing`, etc.). If a section has no group-header rows, emit `groupTargets[<section.sectionName>] = {}` — `sectionTargets[*].nodeId` already points at the implicit root.
+
+   When the preferred path covers every section and group, the resolver is done — no name-walking required, no reconciliation retries needed.
+
+1. **Legacy fallback — name-walk against `_base.json.variants[<defaultVariantName>].layoutTree`.** Only when a section or row from the structure cache lacks `_anchor` / `_layerId` (legacy cache produced before the identity-stamping change, or a partial structure run), fall through to the legacy resolver below. Every node in `layoutTree` carries `id`. Sub-steps:
+   1. **Sentinel.** If the section is anchored to the variant root (its first row is a host-container row with no group header — see `agent-structure-instruction.md` § Group Header Rows), emit `{ name: "__root__", nodeId: <variants[<default>].id> }`.
+   2. **Direct match.** Walk `layoutTree` and collect every node whose `name` equals the target. If exactly one match exists, use it.
+   3. **Reconciliation-aware retry.** Read `{cachePath}/{componentSlug}-reconciliations.json > data.autoReconciled[]`. For every entry where the rewrite touched a section/group label that resolves to this target, retry the lookup with both `entry.before` and `entry.after`. Match on whichever resolves uniquely.
+   4. **Path-aware tie-break.** When sub-step 2 returns multiple matches, prefer the one whose ancestor names match the section's expected path (sub-component sections inherit the constitutive child's path; root/composition sections start at the variant root). Also prefer non-instance-internal nodes (`id` that does not start with `"I"`) over instance-internal ones — instance-internal nodes belong to a sub-component's body, not the parent's anatomy.
+   5. **Case/whitespace fallback.** As a last resort, normalize both sides via `.trim().toLowerCase()` and retry.
+   6. **Give up.** If still no unique match, emit `{ name: "<original>", nodeId: null }` and surface a `medium` Known-gaps entry: `render-meta: could not resolve nodeId for sectionTargets["<sectionName>"] / groupTargets["<sectionName>"]["<groupName>"] — layer name "<name>" matched <count> nodes in layoutTree`.
+
+   The legacy fallback exists for backward compatibility with structure caches in `.uspec-cache/` that pre-date identity stamping. It is not the recommended path — re-run `extract-structure` (or the full orchestrator) to regenerate the cache with `_anchor` / `_layerName` / `_layerId` populated and avoid the heuristic ladder.
+
+**Group-header detection (legacy fallback only).** For each `data.sections[]` entry from the structure cache, walk `rows[]` in order. Each row with `isSubProperty !== true` whose `spec` is non-empty and is **not** a known property name (i.e., does not match the property-family allowlist — `padding`, `itemSpacing`, `cornerRadius`, etc., per `agent-structure-instruction.md`'s R5 accepted-names set) is a group header. The row's `spec` is the group name. Resolve via the legacy sub-steps above. Modern caches skip this detection entirely because the row carries `_layerName` + `_layerId` directly.
+
+### Exclusion rules
+
+Render-meta is **machine-readable**. It MUST NOT carry plugin-internal vocabulary that has been a UX problem in the human-readable body — specifically:
+
+- Do NOT include `parentSetName` strings or any other "inside-the-plugin" debug fields in the emitted JSON beyond what the schema declares above.
+- Do NOT echo `subCompSetName` strings beyond the `{ name, subCompSetId }` shape — the human-readable name is `name`, the canonical id is `subCompSetId`, nothing else is needed.
+- Do NOT reference `_extractionArtifacts` from any cache file — those are interpretation traces, not component metadata.
+
+### Determinism
+
+Two `create-component-md` runs against an identical `_base.json` MUST produce byte-identical render-meta blocks. Key ordering inside every object is alphabetical when the orchestrator serializes; arrays preserve `_base.json` order (which is itself the Figma walk order). `extractedAt` and `sourceHash` come from `_base.json` so they don't drift between renders.
+
 ## Audit (before writing the `.md`)
 
 Before the orchestrator writes the final file, verify:
@@ -501,6 +593,11 @@ Before the orchestrator writes the final file, verify:
 - [ ] Every Color table cell with a resolved token AND an available hex renders in `tokenName (#RRGGBB)` form — neither the token nor the hex appears alone when both are present.
 - [ ] Every Color table cell where the token resolved to `null` / `"none"` AND a hex is available renders as the bare hex (`#RRGGBB`) in the cell — not as `none (hard-coded)`, not as `none` with the hex hidden in notes.
 - [ ] Every Color table cell where neither a token nor a hex is available renders as `none`. When `elementHexes` / `elementHexesByState` is absent from the cache entirely, the table degrades cleanly to bare token names (or `none`) with no formatting errors.
+- [ ] `{{RENDER_META_JSON}}` has been substituted with a fenced ```` ```json ```` block. The block parses as JSON. `schemaVersion` equals `"1.0"`. `fileKey` and `nodeId` match the renderer inputs. The HTML comment delimiters `<!-- render-meta:start v=1 -->` and `<!-- render-meta:end -->` are present and bracket the block (they are part of the template — confirm they survived rendering).
+- [ ] Every `booleanDefs[].associatedLayerId` in the rendered render-meta block equals the corresponding `_base.json.propertyDefinitions.booleans[].associatedLayerId` byte-for-byte. No silent renames; no truncations.
+- [ ] Every `sectionTargets[<name>]` entry whose `name !== "__root__"` and is non-null has a non-null `nodeId`. Source preference: read `section._anchor` from the structure cache (preferred); fall back to `_base.json.variants[<default>].layoutTree` walk only when `_anchor` is absent (legacy cache). When any entry leaves `nodeId: null`, the Known-gaps block contains a corresponding `medium` line: `render-meta: could not resolve nodeId for sectionTargets["<name>"] — ...`.
+- [ ] Every `groupTargets[<section>][<group>]` entry has both non-null `name` and non-null `nodeId`. Source preference: read `row._layerName` / `row._layerId` from the structure cache's group-header rows (preferred); fall back to layoutTree name-walk only when those fields are absent (legacy cache). Same Known-gaps coupling rule as above on failure.
+- [ ] Render-meta does not echo plugin-internal vocabulary (`parentSetName` strings, `subCompSetName` beyond the `{ name, subCompSetId }` shape, `_extractionArtifacts` references). The block only contains the documented schema fields.
 
 If any check fails, fix the rendering code — do **not** patch the produced `.md` by hand.
 
@@ -511,5 +608,7 @@ Write the final `.md` to `{outputPath}` using UTF-8. Do not include a trailing n
 Return a single-line summary to the user:
 
 ```
-Component Markdown written: sections={api,structure,color,voice}, bytes=<B> → <outputPath>
+Component Markdown written: sections={api,structure,color,voice}, render-meta={sectionTargets=<resolved>/<total>, groupTargets=<resolved>/<total>}, bytes=<B> → <outputPath>
 ```
+
+Where `<resolved>/<total>` are the count of entries whose `nodeId` is non-null over the total entry count. A trailing `0/N` on either pair signals that the underlying `_base.json` was produced by a pre-render-meta plugin build (no `id` fields on tree-walk nodes) — re-extract with the current uSpec Extract plugin to recover.

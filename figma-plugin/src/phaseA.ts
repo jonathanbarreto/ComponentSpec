@@ -112,25 +112,46 @@ export async function runPhaseA(nodeId: string): Promise<PhaseAResult> {
     if (def.type === 'BOOLEAN') {
       let associatedLayerId: string | null = null;
       let associatedLayerName: string | null = null;
-      const props = defaultVariant.componentProperties;
-      if (props) {
-        for (const [k, vRaw] of Object.entries(props)) {
-          const v: any = vRaw;
-          if (k.split('#')[0] === cleanKey && v.type === 'BOOLEAN') {
-            const nId = k.split('#')[1];
-            if (nId) {
-              try {
-                const compoundId = defaultVariant.id.split(';')[0] + ';' + nId;
-                const layerNode = await figma.getNodeByIdAsync(compoundId);
-                if (layerNode) {
-                  associatedLayerId = compoundId;
-                  associatedLayerName = (layerNode as any).name;
-                }
-              } catch {}
+      // Walk a variant's tree and find the first node whose
+      // `componentPropertyReferences.visible` references this rawKey. That is
+      // Figma's source of truth for "this boolean controls visibility of this
+      // layer." Same pattern Phase G uses in `detectBoolGatedFillers`.
+      function findVisibleRefNode(n: any): any | null {
+        const refs = sg(n, 'componentPropertyReferences');
+        if (refs && refs.visible === rawKey) return n;
+        const kids = sg(n, 'children');
+        if (Array.isArray(kids)) {
+          for (const c of kids) {
+            const hit = findVisibleRefNode(c);
+            if (hit) return hit;
+          }
+        }
+        return null;
+      }
+      // Try the default variant first (cheapest, most common case). If the
+      // boolean's gated layer isn't present there (designers commonly omit
+      // layers from the default state — e.g. a "clear" button that only
+      // appears when input is active), fall back to scanning every other
+      // variant in the COMPONENT_SET. The first match wins; layer ids are
+      // per-variant but the (id, name) pair we record is canonical for the
+      // boolean's identity downstream.
+      try {
+        let layerNode = findVisibleRefNode(defaultVariant);
+        if (!layerNode && isComponentSet) {
+          for (const sibling of (node as ComponentSetNode).children) {
+            if (sibling.id === defaultVariant.id) continue;
+            const hit = findVisibleRefNode(sibling);
+            if (hit) {
+              layerNode = hit;
+              break;
             }
           }
         }
-      }
+        if (layerNode) {
+          associatedLayerId = layerNode.id;
+          associatedLayerName = layerNode.name;
+        }
+      } catch {}
       booleans.push({
         name: cleanKey,
         rawKey,

@@ -705,6 +705,7 @@ Organize the data you gather into the following logical structure before renderi
   - **sectionDescription** (optional) — explanatory text or "See X spec" references
   - **preview** — a brief description of which component variant instances to place in the section's `#Preview` frame; typically one labeled instance per value column, varying the section's axis while keeping other axes at defaults
   - **columns** — ordered list of column headers; first is always "Spec" (or "Composition"), last is always "Notes", middle columns are variant names
+  - **_anchor** (required) — the Figma layer this section is anchored to in the default variant. Shape: `{ layerName: string; layerId: string | null }`. See **Section anchor** below for population rules. The renderer's `create-component-md` orchestrator consumes this directly to populate render-meta `sectionTargets` without re-walking the layout tree.
   - **rows** — one or more rows, each with:
     - **spec** — property name in camelCase (e.g., "minHeight", "horizontalPadding")
     - **values** — one value per middle column (length must equal columns count minus 2)
@@ -716,6 +717,8 @@ Organize the data you gather into the following logical structure before renderi
       - Group-header rows (`spec: "Container"` etc. with all-`"–"` values) also take `provenance: "measured"` when the container node itself was extracted, or `"not-measured"` when it was not.
     - **isSubProperty** (optional) — true if the row belongs to a parent group
     - **isLastInGroup** (optional) — true if this is the final row of a group
+    - **_layerName** (required on group-header rows; absent otherwise) — the literal Figma layer name from `_base.json.variants[<defaultVariantName>].layoutTree` that this group represents. Use the literal `"__root__"` only for a host-container sentinel row that anchors to the variant root. See **Stamping layer identity on group-header rows** below.
+    - **_layerId** (required on group-header rows; absent otherwise) — the resolved Figma node id for the layer above, or `null` when the group represents a layer that is absent from the default variant's `layoutTree` (e.g., a layer parked under a non-default state for design preview only). A `null` here pairs with a `medium` Known-gaps entry surfaced by the `create-component-md` renderer.
 
 ---
 
@@ -737,6 +740,8 @@ Organize the data you gather into the following logical structure before renderi
 | `provenance` | **Required.** `"measured"` for values extracted verbatim from `_base.json`. `"inferred"` for values derived from a documented design token (cite the token in `notes`). `"not-measured"` for values the extraction did not capture (the cell must be `"—"`; numerical invention is forbidden). |
 | `isSubProperty` | Set `true` for rows belonging to a group (shows "within-group" hierarchy indicator) |
 | `isLastInGroup` | Set `true` on the final row of a group (shows "end of group" indicator instead of "within-group") |
+| `_layerName` | **Required on group-header rows** (rows where `isSubProperty` is unset or `false` AND `spec` is a descriptive name, not a property family). Literal Figma layer name from the default variant's `layoutTree`, or `"__root__"` for a host-container sentinel row. Absent on sub-property rows. See **Stamping layer identity on group-header rows** below. |
+| `_layerId` | **Required on group-header rows**, parallel to `_layerName`. Resolved Figma node id, or `null` when the layer is absent from the default variant's `layoutTree`. Absent on sub-property rows. |
 
 ### Group Header Rows
 
@@ -748,12 +753,13 @@ Use group header rows to organize related properties:
 | `spec` value | Descriptive name for the group |
 | `values` array | Use `"–"` for all columns (no dimensional values for the header itself) |
 | `isSubProperty` | Do NOT set on the header row itself |
+| `_layerName` / `_layerId` | **Required** — the literal Figma layer name + node id this group corresponds to. See **Stamping layer identity on group-header rows** below. |
 | Child rows | Set `isSubProperty: true` on rows belonging to this group |
 | Last child row | Set BOTH `isSubProperty: true` AND `isLastInGroup: true` on the final row of the group |
 
 **Example pattern:**
 
-- `Container` — values: – | – | – — notes: "Tap target" (group header, no `isSubProperty`)
+- `Container` — values: – | – | – — notes: "Tap target" — `_layerName: "Container"`, `_layerId: "10225:15388"` (group header, no `isSubProperty`)
 - `minHeight` — values: 48 | 56 | 72 — `isSubProperty: true`
 - `padding` — values: 12 | 16 | 20 — `isSubProperty: true`, `isLastInGroup: true`
 
@@ -763,6 +769,36 @@ Container          –      –      –     Tap target
  ├─ minHeight     48     56     72     ...
  └─ padding       12     16     20     ...
 ```
+
+### Stamping layer identity on group-header rows
+
+Every group-header row (rows where `isSubProperty !== true` AND `spec` is a descriptive zone name like `"Container"`, `"Icon area"`, `"Leading slot"`, not a property family like `"padding"`) MUST carry `_layerName` + `_layerId` linking it to the Figma layer it represents. The values are read directly from `_base.json.variants[<defaultVariantName>].layoutTree` during Step 4's walk and serve as a mechanical pass-through for the `create-component-md` orchestrator's render-meta builder — without them, the renderer falls back to fuzzy name-matching against display strings and most `groupTargets[*]` entries resolve to `null`.
+
+**Population rules:**
+
+1. **Sentinel host-container row.** When the first row of a composition section is a host-container sentinel that anchors to the variant root (per the existing host-container rule), emit `_layerName: "__root__"`, `_layerId: <variants[<defaultVariantName>].id>`. This preserves the renderer's `"__root__"` convention.
+2. **Normal group row.** Walk `_base.json.variants[<defaultVariantName>].layoutTree` once during section planning and build a `{ id, name, path }` index keyed by literal layer name. For each group-header row, look up the row's underlying Figma layer (the same node you read dimensions from in Step 4) and stamp:
+   - `_layerName` = the literal `node.name` from `layoutTree` (e.g., `"leadingContent"`, `"icon"`, `"clear button"`).
+   - `_layerId` = the corresponding `node.id` (e.g., `"10225:15388"`).
+3. **Layer absent from default variant.** When a group's underlying layer is present in `_base.json.variants[*].revealedByVariantName[*]` but NOT in the default variant's `layoutTree` (e.g., the `clear button` layer parked under `state=active` for design preview only), emit the literal layer name and `_layerId: null`. The row's `notes` field must already explain the runtime-driven visibility — the `null` here is mechanical, not editorial.
+
+**Naming source of truth.** The `_layerName` is always the literal Figma layer name, never the prose display string in `spec`. `spec` is for the engineer reading the table; `_layerName` is for downstream tooling. They are allowed to differ — most components have `spec: "Leading content"` ↔ `_layerName: "leadingContent"` mismatches, which is fine.
+
+**When `_layerName` cannot be resolved.** When the group describes a logical zone with no corresponding single Figma layer (rare; usually a sign the group should be reorganised), emit `_layerName: "<original spec>"` and `_layerId: null`, and add a one-line note in the row's `notes` explaining the missing pinning. Both fields remain present; downstream tooling reads `_layerId === null` as a render-meta gap and surfaces it.
+
+### Section anchor (`_anchor`)
+
+Every section MUST carry a `_anchor: { layerName, layerId }` field that pins the section to a Figma node in the default variant. The orchestrator's render-meta builder reads this directly into `sectionTargets[<sectionName>]`.
+
+**Population rules per section type:**
+
+1. **Composition section.** Anchor to the variant root: `{ layerName: "__root__", layerId: <variants[<defaultVariantName>].id> }`.
+2. **Sub-component section** (`sectionName` of the form `"<X> — <ChildName>"`, e.g. `"Leading content — Action button"`). Anchor to the **in-context INSTANCE node** of the sub-component as placed inside the parent's default variant — NOT the canonical `subCompSetId`. Source: `_base.json._childComposition.children[]` joined by name with the matching entry's `topLevelInstanceId`. Example for `search-floating`: the `"Leading content — Action button"` section anchors to `{ layerName: "action button", layerId: "10225:15390" }`. The canonical `subCompSetId` cross-link is already covered by render-meta `subComponents[]`; duplicating it on the anchor would bloat the schema.
+3. **Slot content section** (`sectionName` of the form `"<slotName> — <componentName>"`). Anchor to the slot's host frame in the default variant's `layoutTree` (the same node walked for `slotHostGeometry`). When the slot is empty in the default variant, anchor to the slot host frame nonetheless — slot host geometry is still present on a hidden slot.
+4. **State-conditional section.** Anchor to the same root layer as the composition section, since these sections describe additive deltas on the same anatomy: `{ layerName: "__root__", layerId: <variants[<defaultVariantName>].id> }`.
+5. **Zone-specific section** (any other section whose `sectionName` matches a single layer in the layoutTree). Anchor to that layer using the same lookup rule as group rows above.
+
+**When the anchor cannot be resolved.** Emit `_anchor: { layerName: <best-effort name>, layerId: null }`. The orchestrator surfaces this as a `medium` Known-gaps entry. Never omit the field — downstream tooling distinguishes "absent" from "explicitly null".
 
 ---
 

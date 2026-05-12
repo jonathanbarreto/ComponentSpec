@@ -74,6 +74,7 @@ The shared instruction file describes both extraction and Figma rendering. This 
 - **§Field Rules — "Render order: first column → values[0..n] → Notes", "Renders between Spec and Notes columns", "Always renders in the final Notes column"** — rendering-order prose. The `spec` / `values[]` / `notes` shape is still the authoritative schema.
 - **§Common Mistakes — "Overriding preview frame layout" and any bullet about `#Preview` frame behavior** — rendering concerns. Data-level mistakes (missing sub-component sections, wrong axis grouping, bad display strings) still apply.
 - **§Pre-Render Validation Checklist — "Sub-component preview sourcing" and "Preview frame untouched" rows** — do not apply. All other checks (shape of `sections`, correctness of `rows`, column counts, measurement labels) DO still apply.
+- **§Inputs → "Authoritative `.md`" (including the child "What the `.md` already tells you (Mode B extraction scope)" subsection)** — Mode-B-only concepts for the downstream `create-structure` skill. `extract-structure` produces the data that becomes the `.md`; it never consumes a `.md` as input and never runs Mode B. Ignore the entire `### Authoritative .md` block.
 
 Note: Fields that look like rendering config but are part of the output schema (e.g., `preview`, `columns`, `variantProperties`, `booleanOverrides`) must still be populated.
 
@@ -211,7 +212,7 @@ This is the core quality step. You have complete, structured data in the evidenc
 
 1. Look up `subComponentVariantWalks[subCompSetId]` (the sub-component's set id is stored on each `subComponents[]` entry and on `_childComposition.children[]`).
 2. For each column, match a `variants[*]` entry by comparing the column header to `variants[*].variantProperties[axis]` (case-insensitive, whitespace-normalised).
-3. Use the matched entry's `dimensions` for the root-level row values (`minHeight`, `minWidth`, `padding*`, `itemSpacing`, `cornerRadius`, `strokeWeight`, …).
+3. Use the matched entry's `dimensions` for the root-level row values (`minHeight`, `minWidth`, `padding*`, `itemSpacing`, `cornerRadius`, `strokeWeight`, `strokeAlign`, …).
 4. For nested-frame rows (`├ Some inner frame`-style, sourced from the sub-component's internal tree), resolve the same column from the matched entry's `treeHierarchical` — walk by name along the same path you would walk in `subComponentDimensions`.
 5. Cells filled this way carry `provenance: "measured"`.
 
@@ -365,6 +366,7 @@ This rule adapts per component without hardcoding: `_childComposition` is always
 | `counterAxisSpacing` | `dimensions.counterAxisSpacing.value` |
 | `cornerRadius` (uniform or per-corner) | `dimensions.cornerRadius.value` (and per-corner sub-entries when present) |
 | `borderWidth` | any `strokes[*].strokeWeight > 0` |
+| `borderAlign` | presence of `dimensions.strokeAlign` AND `strokes[*].strokeWeight > 0` (gate mirrors `borderWidth`). Enum, not numeric — recorded in `nonZeroProps` as `{ family: "borderAlign", value: "inside" \| "outside" \| "center", source: "dimensions.strokeAlign.display" }` whenever the gate fires. Omitted entirely when the gate fails. |
 
 A family with value `0` is recorded only implicitly (by its absence from `nonZeroProps`) — `nonZeroProps` is the non-zero-only audit surface. The "emit both axes for symmetric padding even when one side is zero" quality rule (see `agent-structure-instruction.md` Pre-Render Validation Checklist) lives at the **row-emission** layer in Step 5, not in this matrix: the matrix's job is to guarantee that *every real non-zero value* is accounted for by at least one row. Zero-side documentation rows are expected to exist alongside and are never flagged as missing here (they cannot be — zero is never in `nonZeroProps`).
 
@@ -380,6 +382,7 @@ b) Scan `data.sections[<owningSection>].rows[*].spec` for any row whose spec is 
 | itemSpacing | `itemSpacing`, `contentSpacing`, `gapBetween` |
 | cornerRadius | `cornerRadius`, `cornerRadiusTopStart`, `cornerRadiusTopEnd`, `cornerRadiusBottomStart`, `cornerRadiusBottomEnd` |
 | borderWidth | `borderWidth`, `strokeWeight` |
+| borderAlign | `borderAlign` |
 
 Record matches in `emittedRows`; record unmatched families in `missing`.
 
@@ -395,6 +398,13 @@ c) `complete = (entries.every(e => e.missing.length === 0))`.
 - `missingFamilies` = `entries.reduce((sum, e) => sum + e.missing.length, 0)`.
 
 Entries with zero non-zero properties (pure visual/wrapper FRAMEs) still appear in `entries[]` with empty `nonZeroProps`, `emittedRows`, and `missing` — they contribute to `framesWalked` but not to `framesWithNonZeroProps` or `missingFamilies`. This keeps the recount in Step 9.5 verifiable.
+
+**R6. STAMP LAYER IDENTITY ONTO GROUP HEADERS AND SECTION ANCHORS.** Reuse the same `{ nodeId, name, nodePath }` index built during R1-R5 to populate two fields that downstream tooling consumes as mechanical pass-through:
+
+- For every row in `data.sections[*].rows[*]` where `isSubProperty !== true` AND `spec` is a zone/group descriptor (not a property family from R5's accepted-names set), stamp `row._layerName` + `row._layerId` per the rules in `agent-structure-instruction.md` § **Stamping layer identity on group-header rows**. The lookup uses the same FRAME you read dimensions from in Step 4 — typically the FRAME whose `coverageMatrix.entries[]` `owningSection` matches this section's name and whose `nonZeroProps` overlap the group's emitted rows. When the group corresponds to a layer absent from the default variant's `layoutTree` (present only in `revealedByVariantName[*]`), still stamp `_layerName` with the literal name and emit `_layerId: null`.
+- For every section in `data.sections[]`, stamp `section._anchor` per the rules in `agent-structure-instruction.md` § **Section anchor**. The four anchor cases (composition root, sub-component INSTANCE, slot host, zone) are deterministic from `_base.json` alone — no Figma calls needed.
+
+This pass runs once after R1-R5 complete and before the coverage matrix is finalized. It cannot fail the run (no `complete: false` consequence) — when an anchor or group cannot be resolved, the corresponding `_layerId` is `null` and the renderer surfaces a `medium` Known-gaps entry. The fields are mechanical pass-through; do NOT rewrite display names (`spec` / `sectionName`) to match the layer names.
 
 **D.3. Consolidated typography table (schema extension).** When the component contains two or more distinct text elements, emit `data._extractionArtifacts.typographyTable[]` in addition to the per-section typography rows. See the instruction file's **Consolidated Typography Table** subsection for the reasoning. Strict entry shape:
 
@@ -466,9 +476,16 @@ Follow the schema in the instruction file:
   - `sectionName`: string
   - `sectionDescription`: string (optional)
   - `columns`: string[] (first is "Spec" or "Composition", last is "Notes")
-  - `rows`: array, each with `spec`, `values[]` (length `columns.length - 2`), `notes`, optional `isSubProperty`, `isLastInGroup`
+  - `_anchor`: `{ layerName: string; layerId: string | null }` — Figma layer this section is anchored to (see R6 / instruction file)
+  - `rows`: array, each with `spec`, `values[]` (length `columns.length - 2`), `notes`, optional `isSubProperty`, `isLastInGroup`. Group-header rows (`isSubProperty !== true` AND `spec` is a zone descriptor) additionally carry `_layerName: string` and `_layerId: string | null` (see R6 / instruction file).
 
 **Populating rows from dimensional data.** Look up `dataSource` and read measurements at each column key. Use the `display` field directly as the cell value. Collapsed padding: single value → one `padding` row; `{vertical, horizontal}` → `verticalPadding` + `horizontalPadding`; per-side → individual rows. Collapsed cornerRadius: uniform → one row; per-corner → `cornerRadiusTopStart`, etc. Typography: `{styleName}` → one `textStyle` row; inline props → `fontSize`, `fontWeight`, `lineHeight` rows.
+
+**Border rows are emitted as a pair.** Whenever a `borderWidth` row is queued (gate: `strokePaintToken != null` — see the structure instruction file's "Stroke weight" guidance), also queue a sibling `borderAlign` row populated from `dimensions.strokeAlign.display` (`inside` / `outside` / `center`). The two rows share the same gate: emit both, or emit neither. The renderer treats `borderAlign` as the immediately-following sibling row to `borderWidth` for reading order.
+
+**Source-of-truth note.** `strokeAlign` is captured by `extractDims()` (Phase E + Phase I), so it lives on `variants[].dimensions`, `variants[].treeHierarchical[*].dimensions`, and `subComponentVariantWalks.*.variants[*].dimensions[+treeHierarchical[*]]`. It is **not** on `variants[].revealedTree[*].dimensions` — Phase G uses a minimal `dim()` extractor focused on topology, and dimensional ground truth always comes from the baseline `treeHierarchical` (which walks `visible: false` children too). If a row's primary `dataSource` is `revealedTree`, fall back to the matching node in the baseline `treeHierarchical` (same `id` or same path) to read `strokeAlign`.
+
+**Legacy fallback.** If `dimensions.strokeAlign` is absent from **all** baseline sources (a `_base.json` produced by a pre-2.3.0 plugin build), emit the `borderAlign` row with value `"—"` and `provenance: "not-measured"`, and add one summary line in `generalNotes` recommending the user re-extract with the current plugin.
 
 **Override for `slotContent` sections.** Use `slotContext` as primary source for hosting-container rows. Use `self` only for values different from the preferred component's standalone defaults because of slot placement. Skip the preferred component's own internal padding, cornerRadius, borderWidth, icon sizes, internal spacing, and typography.
 
@@ -488,9 +505,10 @@ Structure audit:
 - [ ] Every row with provenance="measured" has a display string that came from _base.json verbatim
 - [ ] Not-measured row count is ≤ 20% of total rows (otherwise: Step 3-delta was fired)
 - [ ] Every auto-layout container present in variants[*].treeHierarchical or revealedByVariantName[*] has at least one documented row
-- [ ] **Per-property coverage:** for every auto-layout FRAME under R1–R3, every non-zero layout property family from R4 (padding / itemSpacing / cornerRadius / borderWidth) is matched by a row whose `spec` is in the accepted-names set from §coverageMatrix R5. Symmetric padding `{ vertical, horizontal }` emits BOTH `verticalPadding` and `horizontalPadding` rows, including when one side is `0`. Missing ≠ zero.
+- [ ] **Per-property coverage:** for every auto-layout FRAME under R1–R3, every non-zero layout property family from R4 (padding / itemSpacing / cornerRadius / borderWidth / borderAlign) is matched by a row whose `spec` is in the accepted-names set from §coverageMatrix R5. Symmetric padding `{ vertical, horizontal }` emits BOTH `verticalPadding` and `horizontalPadding` rows, including when one side is `0`. Missing ≠ zero. `borderAlign` is gated identically to `borderWidth`: emit both rows when the FRAME paints a stroke, neither when it does not.
 - [ ] `data._extractionArtifacts.coverageMatrix.complete === true`. The matrix was populated by walking the five rules in §coverageMatrix; every entry whose `missing[]` is non-empty MUST block the return. If coverage cannot be reached for a legitimate reason (e.g., a FRAME is a documented pass-through wrapper), still emit the entry with `complete: false` and a `pendingReason` on each missing family — do not silently set `complete: true`.
 - [ ] `coverageMatrix.totals.framesWalked` matches an independent recount from `_base.json` using rules R1–R3 — the orchestrator's Step 9.5 gate re-runs this recount and will block on mismatch.
+- [ ] **Layer-identity stamping (R6).** Every group-header row (`isSubProperty !== true` AND `spec` is a zone descriptor, not a property family from R5) carries both `_layerName` (string, possibly `"__root__"`) and `_layerId` (string or `null`). Every `data.sections[]` entry carries `_anchor: { layerName, layerId }`. `_layerId` / `_anchor.layerId` is `null` only when the layer is legitimately absent from the default variant's `layoutTree` (revealed-only) or cannot be pinned to a single Figma node — in either case the row's `notes` (or the section's `sectionDescription`) explains the gap. Property-family rows (`padding`, `itemSpacing`, etc.) MUST NOT carry these fields.
 - [ ] **Sub-component variant walks consumed.** For every section whose columns correspond to a constitutive sub-component's OWN variant axis, every column is filled from `_base.json.subComponentVariantWalks[subCompSetId].variants[*]` with `provenance: "measured"`. `"—"` cells on those columns are permitted ONLY when the entry is `skipped: true` (cite `skippedReason` in row notes) or when a specific `variants[*]` combo is genuinely absent (cite the missing `variantKey` in row notes). A `_deltaExtractions[*]` entry for the sub-component axis is emitted ONLY when `subComponentVariantWalks` is missing from `_base.json` (legacy fixture) or when the matching block is `skipped` — never when Phase I walked the axis successfully.
 - [ ] No typography prose in notes — every TEXT node emits textStyle OR inline-prop rows OR a not-measured row
 - [ ] Every sub-component classified as subComponent has its own section
@@ -525,7 +543,13 @@ Write the finalized `StructureSpecData` object as pretty-printed JSON to `{cache
   "data": {
     "componentName": "<name>",
     "generalNotes": "<string>",
-    "sections": [ /* StructureSpecData.sections */ ],
+    "sections": [
+      /* StructureSpecData.sections — each entry carries `_anchor: { layerName, layerId }`
+         pinning the section to a Figma layer in the default variant. Group-header rows
+         (isSubProperty !== true AND spec is a zone descriptor) carry `_layerName` and
+         `_layerId`. Both fields are populated by R6 in Step 4.D.2. See agent-structure-
+         instruction.md § Stamping layer identity on group-header rows + § Section anchor. */
+    ],
     "_deltaExtractions": [ /* 0+ entries */ ],
     "_dictionaryUnavailable": false /* true when Step 2.5 could not locate the api-dictionary.json */,
     "_extractionArtifacts": {

@@ -24,7 +24,7 @@ import {
 } from './safe';
 import { resolvePreferredComponent } from './resolveKey';
 
-const PLUGIN_VERSION = '2.1.0';
+const PLUGIN_VERSION = '2.3.0';
 
 figma.showUI(__html__, { width: 420, height: 620, themeColors: true });
 

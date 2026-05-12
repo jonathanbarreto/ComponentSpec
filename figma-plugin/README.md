@@ -16,15 +16,30 @@ Highlights:
 
 - **Every variant is walked** — no default-variant sampling. Cross-variant diffs and
   state comparison are computed directly in the sandbox.
-- **Designer-in-the-loop composition.** Before extraction, the plugin UI presents each
-  top-level child instance with a first-guess classification (constitutive / referenced /
-  decorative). The designer confirms or flips each guess; the resolved answers land in
+- **Sub-components are walked, not sampled.** Constitutive children with variant axes
+  (e.g. `Input.size = large|medium|small`) get a Phase I cross-product walk, capped at 20
+  combos, under `subComponentVariantWalks[subCompSetId]`. Plain-COMPONENT children get a
+  single `(default)` walk whose nested-INSTANCE leaves carry an `instanceConfig` summary
+  in lieu of recursion.
+- **Designer-in-the-loop composition.** The plugin UI presents each top-level child
+  instance with a first-guess classification (constitutive / referenced / decorative). The
+  designer confirms or flips each guess; resolved answers land in
   `_base.json._childComposition.children[]` with `classificationEvidence: ["user-selected"]`.
-- **Inline font properties are always captured** alongside text style IDs, so typography
-  data survives even when a library-linked text style cannot be resolved.
-- **Library-linked variables are resolved** via `figma.variables.getVariableByIdAsync`,
-  exposing each variable's Figma `name`, `codeSyntax`, alias chain, and remote collection
+- **Inline font properties are captured** alongside text style IDs, so typography data
+  survives when a library-linked text style cannot be resolved.
+- **Library-linked variables** are resolved via `figma.variables.getVariableByIdAsync`,
+  exposing each variable's `name`, `codeSyntax`, alias chain, and remote collection
   metadata.
+- **Library-linked components** are resolved through `resolveKey.ts`: node-id fast path →
+  document-wide key index → `importComponent(Set)ByKeyAsync`. The document-wide layer is
+  preferred so locally-published variants retain `.parent` (required to read
+  `variantGroupProperties`).
+- **Figma node ids** are stamped on every entry of `treeHierarchical`, `layoutTree`,
+  `treeFlat`, `colorWalk`, and their revealed counterparts, so downstream consumers can
+  resolve entries back to live layers without name- or path-based search.
+- **Boolean-gated layers** are resolved via `componentPropertyReferences.visible`, with a
+  sibling-variant fallback for layers omitted from the default state (e.g. a "clear"
+  button that only exists when the input is active).
 - **Defensive property accessors** (`safeLen`, `sg`, `sidStr`) let the walker tolerate
   `GROUP` / `SLOT` nodes whose property reads would otherwise throw.
 
@@ -107,6 +122,7 @@ figma-plugin/
     ├── ui.ts              UI logic (checklist, download, clipboard)
     ├── types.ts           Shared types between sandbox and iframe
     ├── safe.ts            Defensive property accessors
+    ├── resolveKey.ts      Shared library publish-key resolver (node-id → doc index → library import)
     ├── phaseA.ts          Meta + axes + property definitions
     ├── phaseB.ts          Local variable collections + resolved values
     ├── phaseC.ts          Style resolution (with inline-sample fallback)
@@ -115,5 +131,6 @@ figma-plugin/
     ├── phaseF.ts          Cross-variant diffs + axis classification
     ├── phaseG.ts          Revealed trees + slot host geometry
     ├── phaseH.ts          Ownership hints
+    ├── phaseI.ts          Sub-component variant walks (cross-product for constitutive sets, `(default)` for plain COMPONENTs)
     └── childComposition.ts  Phase F' — first-guess child classification
 ```

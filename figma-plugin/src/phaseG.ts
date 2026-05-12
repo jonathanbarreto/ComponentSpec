@@ -77,6 +77,7 @@ async function loadAllFonts(rootNode: any): Promise<void> {
 
 async function hierWalk(node: any, depth: number): Promise<any> {
   const entry: any = {
+    id: node.id,
     name: node.name,
     type: node.type,
     visible: node.visible,
@@ -157,6 +158,7 @@ async function colorWalkRevealed(
     for (const f of nodeFills) {
       if (f.visible === false) continue;
       const entry: any = {
+        nodeId: node.id,
         element: elementName,
         path,
         property: node.type === 'TEXT' ? 'text fill' : 'fill',
@@ -196,6 +198,7 @@ async function colorWalkRevealed(
   }
   if (fillStyleId && visibleFills.length >= 2) {
     const composite: any = {
+      nodeId: node.id,
       element: elementName,
       path,
       property: 'fill-composite',
@@ -220,6 +223,7 @@ async function colorWalkRevealed(
     for (const s of nodeStrokes) {
       if (s.visible === false) continue;
       const entry: any = {
+        nodeId: node.id,
         element: elementName,
         path,
         property: 'stroke',
@@ -239,6 +243,7 @@ async function colorWalkRevealed(
     for (const e of nodeEffects) {
       if (e.visible === false) continue;
       const entry: any = {
+        nodeId: node.id,
         element: elementName,
         path,
         property:

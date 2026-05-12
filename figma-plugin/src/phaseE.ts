@@ -196,6 +196,8 @@ export async function extractDims(node: any): Promise<any> {
       d.strokeWeight = { value: v, token: token || null, display: md(v, token) };
     }
   }
+  const sa = sg(node, 'strokeAlign');
+  if (sa) d.strokeAlign = { value: sa, token: null, display: String(sa).toLowerCase() };
   const lm = sg(node, 'layoutMode');
   if (lm && lm !== 'NONE') d.layoutMode = { value: lm, token: null, display: lm };
   const pax = sg(node, 'primaryAxisAlignItems');
@@ -332,6 +334,7 @@ async function hierWalk(
   ctx: WalkContext
 ): Promise<any> {
   const entry: any = {
+    id: node.id,
     name: node.name,
     type: node.type,
     visible: node.visible,
@@ -393,6 +396,7 @@ function buildLayoutTree(node: any, depth: number): any {
   const childTrees = kids.map((c: any) => buildLayoutTree(c, depth + 1));
   if (!isAuto && depth > 0) return childTrees.length === 1 ? childTrees[0] : childTrees;
   return {
+    id: node.id,
     name: node.name,
     layoutMode: lm || 'NONE',
     hasPadding:
@@ -416,6 +420,7 @@ async function flatWalk(variant: any): Promise<any[]> {
     const eabsY = n.absoluteTransform[1][2];
     const e: any = {
       index: idx++,
+      id: n.id,
       name: n.name,
       nodeType: n.type,
       visible: n.visible,
@@ -475,6 +480,7 @@ async function colorWalk(
 
   for (const f of paints.fills) {
     const entry: any = {
+      nodeId: node.id,
       element: elementName,
       path,
       property: node.type === 'TEXT' ? 'text fill' : 'fill',
@@ -494,6 +500,7 @@ async function colorWalk(
   }
   if (fillStyleId && paints.fills.length >= 2) {
     out.push({
+      nodeId: node.id,
       element: elementName,
       path,
       property: 'fill-composite',
@@ -505,6 +512,7 @@ async function colorWalk(
   }
   for (const s of paints.strokes) {
     const entry: any = {
+      nodeId: node.id,
       element: elementName,
       path,
       property: 'stroke',
@@ -520,6 +528,7 @@ async function colorWalk(
   }
   for (const e of paints.effects) {
     const entry: any = {
+      nodeId: node.id,
       element: elementName,
       path,
       property:

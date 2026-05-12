@@ -147,6 +147,7 @@ async function summarizeInstance(node: any): Promise<any> {
 // describe how the instance is configured without recursing into it.
 async function measureHierarchical(node: any, depth: number): Promise<any> {
   const entry: any = {
+    id: node.id,
     name: node.name,
     type: node.type,
     visible: node.visible,

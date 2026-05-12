@@ -2,11 +2,9 @@
 
 Generate design system documentation for your UI components, directly from your AI agent.
 
-You describe a component, an agent skill analyzes it using your Figma file as context, and the output is rendered into Figma or written to a portable `.md` file. Supports both [Figma Console MCP](https://github.com/southleft/figma-console-mcp) and [native Figma MCP](https://github.com/figma/figma-mcp).
+Describe a component to your agent. A uSpec skill analyzes it using your Figma file as context and either renders the output back into Figma or writes a portable `.md` file. Works with [Figma Console MCP](https://github.com/southleft/figma-console-mcp) or the [native Figma MCP](https://github.com/figma/figma-mcp), inside **Cursor**, **Claude Code**, or **Codex**.
 
-Works with **Cursor**, **Claude Code**, and **Codex**.
-
-> **New in v2.0** — `create-component-md`: generate one markdown file per component (API, structure, color, screen-reader). An artifact LLM tools can build from and humans can query. Requires the [uSpec Extract Figma plugin](figma-plugin/) (built locally from this repo); the other skills work directly through your Figma MCP and need no plugin.
+> **Component Markdown** — `create-component-md` produces one self-contained `.md` per component covering API, structure, color, and screen-reader behavior. An artifact LLM tools can build from and humans can query. It needs the [uSpec Extract Figma plugin](figma-plugin/) (built locally from this repo); every other skill works through your Figma MCP and needs no plugin.
 
 ## What you can generate
 
@@ -16,7 +14,7 @@ Works with **Cursor**, **Claude Code**, and **Codex**.
 | API Spec | Properties, values, defaults, and configuration examples |
 | Color Annotation | Design token mapping for every element and state |
 | Structure Spec | Dimensions, spacing, and padding across density and size variants |
-| Screen Reader Spec | VoiceOver, TalkBack, and ARIA accessibility specs |
+| Screen Reader Spec | VoiceOver, TalkBack, and ARIA behavior for every element and state |
 | Motion Spec | Animation timeline bars and easing details from After Effects data |
 | Component Anatomy | Numbered markers and attribute tables for every element |
 | Component Properties | Variant axes, boolean toggles, and variable mode exhibits |

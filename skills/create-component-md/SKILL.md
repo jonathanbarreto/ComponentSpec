@@ -168,6 +168,7 @@ If Q1 and Q2 produce contradictory answers, default to **referenced** and log th
 4. **Flush phase context.** Keep only: `_base.json` path + the one-line summary.
 5. Verify the file has `_meta`, `component`, `variantAxes`, `propertyDefinitions`, `variants[]`, `ownershipHints[]`, `_childComposition`. `crossVariant` is allowed to be `null` (single-variant-axis component). If any required top-level key is missing, abort with a diagnostic asking the user to re-run the uSpec Extract plugin.
 6. If `_extractionNotes.warnings.length > 0`, surface the warnings to the user before continuing. Common codes include `HIERWALK_MISSING_CHILDREN` and walk-validation warnings like "Walked tree is missing children for constitutive instance(s)" — both mean the `.md` may be incomplete and the user should re-extract with a corrected selection.
+7. **Render-meta freshness check.** Spot-check `_base.json.variants[<defaultVariantName>].layoutTree`: if it is an object whose root entry has no `id` field (or `id === undefined`), the file was produced by a pre-render-meta plugin build. Render-meta will still be emitted at Step 9, but every `sectionTargets[*].nodeId` and `groupTargets[*][*].nodeId` will be `null` and the Step 9.5 integrity gate will fail those rules. Surface a warning right here so the user has time to re-extract before the run completes: "render-meta: `_base.json` was produced by a pre-render-meta plugin build (no `id` on `layoutTree` nodes); re-extract with the current uSpec Extract plugin to populate `sectionTargets[*].nodeId` and `groupTargets[*][*].nodeId`. The `.md` will still render, but downstream `create-*` skills will fall back to MCP layer-name lookups."
 
 ### Step 4.5: Post-extract review (composition classification)
 
@@ -333,11 +334,13 @@ When `data.retries[].outcome === "resolved"`, the corresponding mismatch disappe
 
 **Flush the reconciliation working context.** Keep only: the path `{cachePath}/{componentSlug}-reconciliations.json` + counts `(auto-rewrites=<A>, retries=<R>, unresolved=<U>)`.
 
+**Render-meta handoff note.** Step 9's render-meta builder consumes `data.autoReconciled[]` to do drift-aware name lookups when resolving `sectionTargets[*].nodeId` / `groupTargets[*][*].nodeId` against `_base.json.variants[<default>].layoutTree`. When a section/group label was rewritten here (e.g., `"Clear button"` → `"clear (X) button"`), render-meta retries the layer lookup with both `entry.before` and `entry.after` so a successful auto-rewrite never silently breaks ID resolution. This is a downstream-consumer relationship only — render-meta does NOT itself trigger further reconciliation, and Step 8.5 owns every rewrite that lives in the cache files.
+
 ### Step 9: Render the Markdown
 
 Now the parent's context should contain:
 
-- 4 domain cache-file paths (api, structure, color, voice). `_base.json` remains on disk at `{cachePath}/{componentSlug}-_base.json` for **targeted reads only** during rendering — specifically `_childComposition`, `_extractionNotes.warnings`, and `variants[*]._selfCheck.missingChildren`. Everything else renderable was already lifted into the four domain JSONs.
+- 4 domain cache-file paths (api, structure, color, voice). `_base.json` remains on disk at `{cachePath}/{componentSlug}-_base.json` for **targeted reads only** during rendering — see the expanded narrow-read list below. Everything else renderable was already lifted into the four domain JSONs.
 - `fileKey`, `nodeId`, `componentSlug`, `outputPath`, `cachePath`, `optionalContext`.
 - Any container-rerun hints or delta-extraction records collected during Steps 5–8.
 - Not much else.
@@ -345,9 +348,21 @@ Now the parent's context should contain:
 Read:
 
 1. All four **domain** JSON cache files in full.
-2. `_base.json` — but only the narrow fields the renderer consumes: `_childComposition` (for Composition subsection + Referenced components + Known gaps), `_extractionNotes.warnings` (for Known gaps), `component.componentName` (for cross-check), `variants[*]._selfCheck.missingChildren` (for Known gaps). Do not load it wholesale.
-3. `{{ref:component-md/component-md-template.md}}`.
-4. `{{ref:component-md/agent-component-md-instruction.md}}`.
+2. `_base.json` — only the narrow fields the renderer consumes (do not load wholesale):
+   - `_meta` (full) — for render-meta `extractedAt`, `fileKey`, `nodeId`, `sourceHash` recomputation
+   - `_childComposition` — for Composition subsection + Referenced components + Known gaps + render-meta `subComponents[]`
+   - `_extractionNotes.warnings` — for Known gaps
+   - `component` (full) — for cross-check + render-meta `component`
+   - `variantAxes` + `defaultVariant` — for variant-axes summary + render-meta `variantAxes` / `variantAxesDefaults`
+   - `propertyDefinitions` (full) — for render-meta `propertyDefs` + `booleanDefs` + `slotContents`
+   - `slotHostGeometry` — for render-meta `slotContents.preferredComponents` enrichment
+   - `variants[<defaultVariantName>].layoutTree` (full walk) — for render-meta `sectionTargets[*].nodeId` + `groupTargets[*][*].nodeId` resolution
+   - `variants[*]._selfCheck.missingChildren` — for Known gaps
+   - `subComponentVariantWalks` (when present) — for render-meta `subComponents[*].subCompVariantAxesDefaults`
+   - This widening from the prior `_childComposition` + `_extractionNotes.warnings` + `component.componentName` + `_selfCheck` set is intentional: render-meta needs the canonical pre-interpretation shape and the four domain caches do not preserve it. Read these fields once, then re-flush.
+3. `{cachePath}/{componentSlug}-reconciliations.json` — for render-meta name-lookup retries (read `data.autoReconciled[]` for `before`/`after` pairs). When the file is absent, treat as empty (no rewrites).
+4. `{{ref:component-md/component-md-template.md}}`.
+5. `{{ref:component-md/agent-component-md-instruction.md}}`.
 
 Follow `agent-component-md-instruction.md` section by section to produce:
 
@@ -357,6 +372,7 @@ Follow `agent-component-md-instruction.md` section by section to produce:
 - `{{COMPOSITION_SUBSECTION}}` (rendered from `_base.json` top-level `_childComposition`).
 - `{{API_BODY}}`, `{{STRUCTURE_BODY}}`, `{{COLOR_BODY}}`, `{{VOICE_BODY}}` (per-section renderers). API body's Referenced components subsection consumes `_base.json._childComposition.children[]` filtered to `classification === "referenced"`.
 - `{{CROSS_SECTION_INVARIANTS}}` and `{{CROSS_REFERENCES}}` (computed from the `_extractionArtifacts` blocks).
+- **`{{RENDER_META_JSON}}`** — built per `agent-component-md-instruction.md > ## RENDER_META_JSON`. Source: `_base.json` (the narrow fields above) + structure cache `data.sections[]` — modern caches stamp `section._anchor` and group-header `row._layerName` / `row._layerId` directly, which the resolver consumes as mechanical pass-through (preferred path). Reconciliations cache is consulted only by the legacy name-walk fallback for caches produced before identity stamping. Render-meta is mechanical pass-through — never read it from `api.json` even where the fields overlap.
 
 Write the result to `outputPath` using UTF-8.
 
@@ -428,6 +444,13 @@ Cross-file:
 - [ ] _base.json._extractionNotes.warnings is represented in the severity buckets the renderer will emit
 - [ ] **Dictionary mismatch budget.** Let totalRows be the sum of row-level items across the three specialist caches (structure.sections[].rows + color element entries + voice state×platform tables). Let mismatchRows be the sum of _extractionArtifacts.dictionaryMismatches[] lengths minus the count of entries that were auto-reconciled. When mismatchRows / totalRows > 0.25 (hard 25% cap), abort with a diagnostic: "Dictionary mismatch rate exceeds 25% — API over-normalized the vocabulary and every specialist is flagging rows. Re-run extract-api with tighter naming discipline before continuing." The 25% threshold catches the pathological case where the dictionary renames a Figma value to something none of the specialists can evidence.
 - [ ] **Dictionary availability.** When any specialist cache records `_dictionaryUnavailable: true`, surface it as a `medium`-severity Known gap (the specialist ran without the canonical vocabulary and may name things idiosyncratically). Do not abort — standalone-runs of a specialist outside the orchestrator are legal.
+
+Render-meta (these gates run on the about-to-render render-meta object before it is serialized into the .md):
+- [ ] Every booleanDefs[].associatedLayerId in render-meta equals the corresponding _base.json.propertyDefinitions.booleans[<i>].associatedLayerId byte-for-byte. Any drift means the renderer post-processed the field — abort with a diagnostic: "render-meta booleanDefs.associatedLayerId drift for key <key>: render-meta=<value>, _base.json=<value>".
+- [ ] Every sectionTargets[<sectionName>] entry whose `name` is non-null and !== "__root__" has a non-null nodeId. The renderer's preferred path reads `section._anchor` from the structure cache directly; the legacy fallback name-walks `_base.json.variants[<default>].layoutTree`. When any entry leaves nodeId=null (from either path), the about-to-render Known-gaps block MUST contain a matching `medium`-severity line whose substring `render-meta: could not resolve nodeId for sectionTargets["<sectionName>"]` is greppable. Same dry-render + grep mechanism used for reconciliations.json > data.unresolved[]. Missing → abort.
+- [ ] Every groupTargets[<sectionName>][<groupName>] entry has both non-null `name` and non-null `nodeId`. The renderer's preferred path reads `row._layerName` / `row._layerId` from the structure cache's group-header rows; the legacy fallback name-walks layoutTree. Same Known-gaps coupling rule and abort behavior on failure.
+- [ ] When _base.json.variants[<defaultVariantName>].layoutTree's root entry has no `id` field (pre-render-meta plugin build), the diagnostic on the first failing render-meta gate above MUST include the additional line: "looks like _base.json was produced by a pre-render-meta plugin build (no `id` on layoutTree nodes) — re-extract with the current uSpec Extract plugin and re-run create-component-md."
+- [ ] When the structure cache's `data.sections[]` entries lack `_anchor` (legacy cache), and the legacy fallback resolver had to engage for any section/group, the about-to-render Known-gaps block MUST contain one `low`-severity informational line: `render-meta: structure cache lacked _anchor / _layerId fields; legacy layoutTree name-walk fallback engaged. Re-run extract-structure to regenerate the cache with identity stamping.` This is informational, not a defect — but surfacing it nudges authors toward modern caches.
 ```
 
 **Behavior on failure:**
@@ -453,8 +476,10 @@ This step is the last chance to catch fabricated output before it ships to `outp
 Return exactly one line to the user:
 
 ```
-Component Markdown written: sections={api,structure,color,voice}, bytes=<B> → <outputPath>
+Component Markdown written: sections={api,structure,color,voice}, render-meta={sectionTargets=<R>/<T>, groupTargets=<R>/<T>}, bytes=<B> → <outputPath>
 ```
+
+Where `<R>/<T>` is the count of entries with a non-null `nodeId` over the total count. A trailing `0/N` on either pair signals that the underlying `_base.json` was produced by a pre-render-meta plugin build — re-extract with the current uSpec Extract plugin to recover. (If render-meta gates passed in Step 9.5, both pairs will read `T/T`; the per-entry breakdown is in the rendered Known gaps block when any entry was unresolved.)
 
 Then a short paragraph:
 
