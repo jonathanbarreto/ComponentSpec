@@ -41,6 +41,57 @@ export function slugify(name: string): string {
     .replace(/-+/g, '-');
 }
 
+// Snapshot an INSTANCE's `componentProperties` into the typed shape downstream
+// renderers expect. Strips Figma's `#…` clean-key suffix from each property name and
+// preserves both `type` and `value` exactly as Figma returns them — including
+// `VARIANT` entries (one per variant axis).
+//
+// Returns `null` for non-INSTANCE nodes (so callers can store `componentProperties:
+// null` on FRAMEs, vectors, wrappers, and slot-preferred entries with no concrete
+// placed instance). Defensive against `componentProperties` throwing on certain
+// node states (rare, but documented in Figma's plugin types) and against any
+// `type` value Figma might add in the future that isn't in our supported union —
+// unknown types are dropped at the source so the typed pipeline stays sound.
+const ALLOWED_PROPERTY_TYPES = ['BOOLEAN', 'INSTANCE_SWAP', 'TEXT', 'VARIANT', 'SLOT'] as const;
+type ComponentPropertyType = (typeof ALLOWED_PROPERTY_TYPES)[number];
+
+export function snapshotComponentProperties(
+  node: any
+): Record<string, { type: ComponentPropertyType; value: unknown }> | null {
+  if (!node || sg(node, 'type') !== 'INSTANCE') return null;
+  const cp = sg(node, 'componentProperties');
+  if (!cp || typeof cp !== 'object') return null;
+  const out: Record<string, { type: ComponentPropertyType; value: unknown }> = {};
+  for (const [k, vRaw] of Object.entries(cp)) {
+    const v: any = vRaw;
+    if (!v || typeof v !== 'object' || typeof v.type !== 'string') continue;
+    if (!(ALLOWED_PROPERTY_TYPES as readonly string[]).includes(v.type)) continue;
+    out[k.split('#')[0]] = { type: v.type as ComponentPropertyType, value: v.value };
+  }
+  return out;
+}
+
+// Resolve a SLOT node's bound slot-property clean-key.
+//
+// Authoritative source: `componentPropertyReferences.mainComponent` (per Figma's
+// SlotNode / shared-node-properties docs — slots are defined by a component
+// property reference, and the SLOT-binding slot lives under the `mainComponent`
+// key alongside `visible` and `characters`).
+//
+// Real-world files often only carry `cpRefs.visible` (the visibility-toggle
+// binding to a separate BOOLEAN prop) on a SLOT node and omit `mainComponent`
+// entirely. In that case fall back to the SLOT node's `name`, which is Figma's
+// UI-enforced convention (a SLOT is named after the slot prop it implements).
+//
+// The previous code grabbed `Object.values(cpRefs)[0]` which would pick up the
+// `visible` binding and produce a wrong key (e.g. "show leading slot" instead
+// of "leading slot"), causing every later lookup-by-slot-prop-name to miss.
+export function getSlotPropName(slotNode: any): string {
+  const cpRefs = sg(slotNode, 'componentPropertyReferences') || {};
+  const ref = typeof cpRefs.mainComponent === 'string' ? cpRefs.mainComponent : null;
+  return ref ? ref.split('#')[0] : sg(slotNode, 'name') || '';
+}
+
 // Layout-wrapper descent. Many components wrap their real sub-components in a single
 // auto-layout FRAME (for clipping, scroll, padding, etc.). Descending through such
 // wrappers lets the classification UI surface the actual sub-components instead of

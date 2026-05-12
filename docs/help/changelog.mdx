@@ -3,6 +3,47 @@ title: "Changelog"
 description: "Product updates and release history"
 ---
 
+<Update label="V2.3 — May 2026" description="Typed componentProperties snapshot threaded end-to-end through the Figma plugin, SLOT-binding bug fix, and a renderer rewrite that drops the booleanOverrides projection in favor of the typed snapshot for the Referenced components table">
+  ## uSpec V2.3
+
+  The Figma plugin now captures every placed instance's full typed `componentProperties` surface (booleans, instance-swaps, text overrides, variant choices) and threads that snapshot end-to-end through the extraction pipeline so the `create-component-md` renderer's "Referenced components" override table reads typed values directly instead of guessing from a value-only `booleanOverrides` projection. The same release fixes a long-standing SLOT-binding bug where the plugin was matching SLOT nodes via the wrong `componentPropertyReferences` key and silently dropping default-child instances from the classification UI.
+
+  ### Typed componentProperties snapshot (Figma plugin 2.4.0)
+
+  - **Phase E** captures `componentProperties` on every walked INSTANCE via the new `snapshotComponentProperties` helper in `figma-plugin/src/safe.ts`. The snapshot mirrors Figma's `InstanceNode.componentProperties` API exactly — every entry carries `{ type, value }` with `type` typed to `BOOLEAN | INSTANCE_SWAP | TEXT | VARIANT | SLOT` — and strips Figma's `#…` clean-key suffix from each property name
+  - **Phase F′** (`childComposition.ts`) forwards the snapshot into every `_childComposition.children[*]` entry, and the plugin UI round-trips it back into the sandbox so the `extract` merge can attach it to slot-origin entries that bypass the first-guess builder. `null` for non-INSTANCE entries (FRAMEs, vectors, layout wrappers) and for slot-preferred entries (which describe a referenced component, not a placed instance — read `propertyDefinitions.slots[].preferredInstances[]` for those defaults)
+  - **`booleanOverrides` is now legacy.** The field is still emitted on every entry — it's used by the first-guess fingerprinting that groups identical sub-component placements — but it's now a booleans-only projection over the typed snapshot instead of an independent read. Slot-default-child entries that previously carried an empty `booleanOverrides` now carry the projected booleans correctly
+  - The new field is documented in `figma-plugin/docs/base-json-schema.md` and the plugin's post-change checklist
+
+  ### SLOT-binding bug fix (Figma plugin 2.4.0)
+
+  - SLOT nodes are now matched to their declared slot property via the new `getSlotPropName` helper, which prefers the authoritative `componentPropertyReferences.mainComponent` binding (per Figma's SlotNode docs) and falls back to the SLOT node's own `name` when that binding is absent — the common case in real files, where SLOTs typically only carry the `visible` binding to a separate BOOLEAN prop
+  - This replaces a buggy `Object.values(cpRefs)[0]` lookup in `phaseA.ts` and `code.ts` that was picking up the `visible` binding (e.g., "show leading slot") instead of the slot binding (e.g., "leading slot"), causing every later lookup-by-slot-prop-name to miss and silently dropping default-child instances from the classification UI
+  - The plugin now also logs a soft `console.warn` when a declared slot property has no matching SLOT node in the default variant — surfaces designer-side renames or genuinely empty slots so the gap is visible
+
+  ### Renderer rewrite for Referenced components (uspec-skills 0.2.11)
+
+  - `references/component-md/agent-component-md-instruction.md` introduces three small helpers shared by the Composition bullet rules and the API "Referenced components" `####` block:
+    - `displayName(child)` prefers `parentSetName` over the variant-identifier `mainComponentName`. When a referenced child is a variant of a COMPONENT_SET, Figma's `mainComponentName` is the variant identifier (`"layout=icon-only, size=small, color=default"`) — useful as a configuration but useless as a component name. `parentSetName` is the human-readable set name (`"action button"`)
+    - `slug(child)` derives the spec filename from `displayName(child)` instead of the raw main-component name, so multi-variant references resolve to the right `./{slug}.md`
+    - `slotSuffix(child)` appends `" (via slot **{slotName}**)"` when a referenced child lives inside a SLOT, so the engineer can locate it in the parent's anatomy without cross-referencing the API's slot table
+  - The "Referenced components" override table now reads `child.componentProperties` exclusively. One row per entry in the typed dict, with per-`type` value formatting:
+    - `BOOLEAN` → `true` / `false`
+    - `INSTANCE_SWAP` → `(instance \`{nodeId}\`)`
+    - `TEXT` → the literal string in backticks
+    - `VARIANT` → the bare option, with `"Variant axis on the placed instance."` in the Notes column
+  - The legacy `booleanOverrides` field remains on every entry for backward compatibility with the first-guess fingerprinting, but is no longer the source of truth for the rendered table. `subCompVariantAxes` is also explicitly demoted from the table — it lists *what axes the child exposes*, not what the parent's placement chose, and belongs in the referenced child's own spec
+  - Slot context is folded into the lead paragraph as a participle clause ("…as the default fill of the **{slotName}** slot") so it shows up exactly where the engineer needs it
+  - Decorative-children rollup is now scoped to top-level entries only — slot-origin entries never appear at the top level and are not part of that count
+
+  ### Documentation
+
+  - `implementation.md` now documents the two new `safe.ts` exports (`snapshotComponentProperties`, `getSlotPropName`), the SLOT-binding bug fix that motivated the latter, and the Phase F′ → renderer flow for the typed `componentProperties` snapshot
+  - `figma-plugin/docs/base-json-schema.md` documents the new `componentProperties` field on `_childComposition.children[]`, demotes `booleanOverrides` to a backward-compat projection, and adds the field to the post-change checklist
+
+  Run `npx uspec-skills update` to pick up the renderer change. To get the new Figma plugin behavior, rebuild `figma-plugin/` locally (`cd figma-plugin && npm install && npm run build`) and re-import the manifest in Figma Desktop. The plugin doesn't ship via npm — it's built per-machine.
+</Update>
+
 <Update label="V2.2 — May 2026" description="Render-meta JSON appendix for component-md, layer-identity stamping in extract-structure, borderWidth/borderAlign row pair, and Figma plugin 2.3.0 with node-id stamping and boolean-gated layer fallback">
   ## uSpec V2.2
 

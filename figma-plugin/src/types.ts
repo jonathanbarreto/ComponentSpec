@@ -2,6 +2,20 @@
 
 export type ChildOrigin = 'top-level' | 'slot-preferred' | 'slot-default-child';
 
+// Mirrors Figma's `InstanceNode.componentProperties` shape exactly: every property the
+// placed instance exposes, keyed by clean property name (the `#…` suffix is stripped),
+// with the type-discriminated value as captured from Figma. `VARIANT` entries are one
+// per variant axis (e.g. `{ size: { type: 'VARIANT', value: 'small' } }`).
+//
+// Distinct from the legacy value-only `propertyDefinitions.slots[].defaultChildren[].
+// contextualOverrides` field elsewhere in `_base.json`. This shape is typed because the
+// renderer needs to know how to format each value (boolean / instance-id / string /
+// variant) without cross-referencing remote child component definitions.
+export type ComponentPropertySnapshot = Record<
+  string,
+  { type: 'BOOLEAN' | 'INSTANCE_SWAP' | 'TEXT' | 'VARIANT' | 'SLOT'; value: unknown }
+>;
+
 export type PreviewChild = {
   name: string;
   nodeType: string;
@@ -10,6 +24,12 @@ export type PreviewChild = {
   subCompSetId: string | null;
   topLevelInstanceId: string | null;
   booleanOverrides: Record<string, boolean>;
+  // Typed snapshot of every component property on the placed instance. Populated for
+  // INSTANCE entries (top-level and slot-default-child); `null` for non-INSTANCE entries
+  // (FRAMEs, vectors, slot-preferred entries which describe a referenced component but
+  // not a placed instance). Source of truth for the renderer's referenced-component
+  // override table.
+  componentProperties: ComponentPropertySnapshot | null;
   subCompVariantAxes: Record<string, string[]>;
   classification: 'constitutive' | 'referenced' | 'decorative';
   classificationReason: string;
@@ -53,6 +73,13 @@ export type UserClassification = {
   parentSetName: string | null;
   subCompSetId: string | null;
   nodeType: string;
+  // Forwarded from PreviewChild so the `extract` merge path can attach this to
+  // slot-origin entries it appends to `_childComposition.children[]` (slot-origin
+  // entries don't pass through buildFirstGuess where componentProperties would
+  // otherwise be set). `null` when the source entry has no placed instance to
+  // snapshot (e.g. slot-preferred entries — they describe a referenced component
+  // but no concrete fill).
+  componentProperties: ComponentPropertySnapshot | null;
 };
 
 export type BaseJsonMeta = {

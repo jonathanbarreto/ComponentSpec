@@ -1,6 +1,6 @@
 // Phase A — meta + axes + property definitions.
 
-import { sg } from './safe';
+import { sg, getSlotPropName } from './safe';
 import { resolvePreferredComponent } from './resolveKey';
 
 export type PhaseAResult = {
@@ -279,20 +279,20 @@ export async function runPhaseA(nodeId: string): Promise<PhaseAResult> {
   if (slots.length > 0 && defaultVariant.findAll) {
     const slotNodes = defaultVariant.findAll((n: any) => n.type === 'SLOT');
     for (const slotNode of slotNodes) {
+      // Authoritative SLOT-to-slot-prop binding via `getSlotPropName` —
+      // `cpRefs.mainComponent` first, then SLOT node name. Skip any SLOT we
+      // can't tie back to a declared slot property (defensive; rare in practice).
+      const slotPropName = getSlotPropName(slotNode);
+      const matchingSlot = slots.find((sp) => sp.name === slotPropName);
+      if (!matchingSlot) continue;
+
       const cpRefs = slotNode.componentPropertyReferences || {};
-      const matchingSlot = slots.find((sp) => {
-        const refKey = Object.values(cpRefs)[0] as string | undefined;
-        if (refKey && refKey.split('#')[0] === sp.name) return true;
-        return sp.name === slotNode.name;
-      });
-      if (matchingSlot) {
-        const visibleRef = cpRefs.visible;
-        if (visibleRef && typeof visibleRef === 'string') {
-          matchingSlot.visibleRawKey = visibleRef;
-          matchingSlot.visiblePropName = visibleRef.split('#')[0];
-        }
+      const visibleRef = cpRefs.visible;
+      if (visibleRef && typeof visibleRef === 'string') {
+        matchingSlot.visibleRawKey = visibleRef;
+        matchingSlot.visiblePropName = visibleRef.split('#')[0];
       }
-      if (matchingSlot && slotNode.children) {
+      if (slotNode.children) {
         for (const child of slotNode.children) {
           const ci: any = { name: child.name, nodeType: child.type, visible: child.visible };
           if (child.type === 'INSTANCE') {

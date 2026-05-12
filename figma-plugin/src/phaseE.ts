@@ -23,6 +23,7 @@ import {
   rgbToHex,
   getEffectiveChildContainer,
   getEffectiveChildContainerOfWalked,
+  snapshotComponentProperties,
 } from './safe';
 
 export type PhaseEVariantResult = {
@@ -367,6 +368,13 @@ async function hierWalk(
               if (v.type === 'BOOLEAN') entry.booleanOverrides[k] = v.value;
             }
           }
+          // Typed snapshot of every property the placed instance exposes — booleans,
+          // instance-swaps, text, variant choices. Forwarded by buildFirstGuess into
+          // `_childComposition.children[].componentProperties` and consumed by the
+          // create-component-md renderer's referenced-component override table.
+          // `null` when the read fails (defensive — `componentProperties` is rarely
+          // unreadable on INSTANCE nodes but the snapshot helper short-circuits safely).
+          entry.componentProperties = snapshotComponentProperties(node);
         }
       }
     } catch {}

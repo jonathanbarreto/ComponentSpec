@@ -587,14 +587,14 @@ The plugin walks the selected `COMPONENT` or `COMPONENT_SET` (a selected variant
 | D | `phaseD.ts` | Library-linked variable resolution (`name`, `codeSyntax`, alias chains, remote collection metadata) via `figma.variables.getVariableByIdAsync` |
 | E | `phaseE.ts` | Per-variant walker: dimensions, hierarchical tree, color walk, post-walk validation. `extractDims` is exported for reuse by Phase I. |
 | F | `phaseF.ts` | Cross-variant diffs + axis classification |
-| F′ | `childComposition.ts` | First-guess classification for each top-level child instance (constitutive / referenced / decorative). Designer confirms or flips each guess in the plugin UI before extraction completes. |
+| F′ | `childComposition.ts` | First-guess classification for each top-level child instance (constitutive / referenced / decorative). Designer confirms or flips each guess in the plugin UI before extraction completes. Forwards Phase E's typed `componentProperties` snapshot into every `_childComposition.children[*]` entry for the renderer's referenced-component override table. |
 | G | `phaseG.ts` | Revealed trees + slot host geometry |
 | H | `phaseH.ts` | Ownership hints (which element "owns" a given color / dimension) |
 | I | `phaseI.ts` | Constitutive sub-component variant walks: enumerates each constitutive child's own variant axes (cross-product capped at 20 combos per sub), measures `dimensions` + `treeHierarchical` per combo, emits `subComponentVariantWalks` keyed by `subCompSetId`. Fixes the case where a parent-variant walk captures a child only in its embedded configuration and misses the child's own size/density/etc. axes. |
 
-**Designer-in-the-loop composition.** Phase F′ pre-classifies children using node metadata (name, main component set, variant axes), but the plugin UI surfaces each top-level child for designer review. Confirmed or flipped guesses land in `_childComposition.children[*]` with `classificationEvidence: ["user-selected"]`. The orchestrator's Step 4.5 review short-circuits to a confirmation-only pass when every child carries that evidence.
+**Designer-in-the-loop composition.** Phase F′ pre-classifies children using node metadata (name, main component set, variant axes), but the plugin UI surfaces each top-level child for designer review. Confirmed or flipped guesses land in `_childComposition.children[*]` with `classificationEvidence: ["user-selected"]`. The orchestrator's Step 4.5 review short-circuits to a confirmation-only pass when every child carries that evidence. Each entry also carries a typed `componentProperties` snapshot (mirroring Figma's `InstanceNode.componentProperties` shape with the `#…` clean-key suffix stripped) for INSTANCE entries — `null` for FRAMEs, vectors, layout wrappers, and slot-preferred entries. The create-component-md renderer reads this snapshot exclusively for its referenced-component override table; the legacy `booleanOverrides` field is now a backward-compat projection over the typed snapshot.
 
-**Defensive accessors.** `src/safe.ts` provides `safeLen`, `sg`, and `sidStr` wrappers that let the walker tolerate `GROUP` and `SLOT` nodes whose property reads would otherwise throw under the plugin sandbox's strict mode.
+**Defensive accessors.** `src/safe.ts` provides `safeLen`, `sg`, and `sidStr` wrappers that let the walker tolerate `GROUP` and `SLOT` nodes whose property reads would otherwise throw under the plugin sandbox's strict mode. `src/safe.ts` also exports `snapshotComponentProperties` (typed `InstanceNode.componentProperties` snapshot consumed by Phase E and the slot-default-child branch in `code.ts`) and `getSlotPropName` (authoritative SLOT → slot-property binding via `componentPropertyReferences.mainComponent` with a name-based fallback; replaces an earlier `Object.values(cpRefs)[0]` lookup that was picking up the `visible` binding instead of the slot binding).
 
 **Inline font capture.** Text style IDs are recorded, but inline font family + style + size + weight are also captured on every text node so typography data survives even when a library-linked text style cannot be resolved.
 
@@ -859,7 +859,7 @@ All instruction files live under `references/<area>/` at the repo root and are s
 | `figma-plugin/src/code.ts` | Sandbox entry point; orchestrates all phases |
 | `figma-plugin/src/ui.html` + `src/ui.ts` | Plugin UI iframe (checklist for child classification, download, clipboard) |
 | `figma-plugin/src/types.ts` | Shared types between sandbox and iframe |
-| `figma-plugin/src/safe.ts` | Defensive property accessors (`safeLen`, `sg`, `sidStr`) |
+| `figma-plugin/src/safe.ts` | Defensive property accessors (`safeLen`, `sg`, `sidStr`), typed `componentProperties` snapshot helper (`snapshotComponentProperties`), and authoritative SLOT → slot-property binding (`getSlotPropName`) |
 | `figma-plugin/src/phaseA.ts` … `phaseH.ts` | Extraction phases A–H (see the [phase map](#figma-plugin-figma-plugin) above) |
 | `figma-plugin/src/phaseI.ts` | Phase I — constitutive sub-component variant walks; uses `extractDims` exported from `phaseE.ts` |
 | `figma-plugin/src/childComposition.ts` | Phase F′ — first-guess child classification |

@@ -7,7 +7,7 @@
 
 import type { PhaseAResult } from './phaseA';
 import type { PhaseEVariantResult } from './phaseE';
-import type { ChildOrigin } from './types';
+import type { ChildOrigin, ComponentPropertySnapshot } from './types';
 import { getEffectiveChildContainerOfWalked, groupBySubComp } from './safe';
 
 export type ChildCompositionEntry = {
@@ -18,6 +18,10 @@ export type ChildCompositionEntry = {
   topLevelInstanceId: string | null;
   nodeType: string;
   booleanOverrides: Record<string, boolean>;
+  // See PreviewChild.componentProperties for the shape's rationale. `null` for entries
+  // without a placed instance (FRAMEs, vectors, wrapper layout chrome, slot-preferred
+  // entries).
+  componentProperties: ComponentPropertySnapshot | null;
   subCompVariantAxes: Record<string, string[]>;
   classification: 'constitutive' | 'referenced' | 'decorative' | null;
   classificationReason: string;
@@ -76,6 +80,7 @@ export function buildFirstGuess(
       topLevelInstanceId: `wrapper:${depth}`,
       nodeType: w.type,
       booleanOverrides: {},
+      componentProperties: null,
       subCompVariantAxes: {},
       classification: 'decorative',
       classificationReason:
@@ -120,6 +125,10 @@ export function buildFirstGuess(
       topLevelInstanceId: `idx:${group.index}`,
       nodeType: child.type,
       booleanOverrides: child.booleanOverrides || {},
+      // Forward the typed snapshot Phase E captured at depth 0. `null` for non-INSTANCE
+      // entries (FRAMEs, vectors, wrappers) and for any INSTANCE Phase E couldn't
+      // snapshot (rare; defensive).
+      componentProperties: child.componentProperties || null,
       subCompVariantAxes: child.subCompVariantAxes || {},
       classification: null,
       classificationReason: '',

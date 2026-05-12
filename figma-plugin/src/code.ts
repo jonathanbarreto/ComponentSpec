@@ -20,11 +20,13 @@ import {
   sg,
   getEffectiveChildContainer,
   getEffectiveChildContainerOfWalked,
+  getSlotPropName,
   groupBySubComp,
+  snapshotComponentProperties,
 } from './safe';
 import { resolvePreferredComponent } from './resolveKey';
 
-const PLUGIN_VERSION = '2.3.0';
+const PLUGIN_VERSION = '2.4.0';
 
 figma.showUI(__html__, { width: 420, height: 620, themeColors: true });
 
@@ -120,6 +122,7 @@ async function sendPreview(): Promise<void> {
         subCompSetId: null,
         topLevelInstanceId: `wrapper:${depth}`,
         booleanOverrides: {},
+        componentProperties: null,
         subCompVariantAxes: {},
         classification: 'decorative',
         classificationReason:
@@ -151,6 +154,7 @@ async function sendPreview(): Promise<void> {
           subCompSetId: null,
           topLevelInstanceId: `idx:${i}`,
           booleanOverrides: {},
+          componentProperties: snapshotComponentProperties(c),
           subCompVariantAxes: {},
           classification: 'decorative',
           classificationReason: '',
@@ -231,18 +235,35 @@ async function sendPreview(): Promise<void> {
           }
         }
 
-        // Pre-locate SLOT nodes inside the default variant and match them to their property
-        // name via `componentPropertyReferences` (same logic as phaseA.ts).
+        // Pre-locate SLOT nodes inside the default variant and match them to their slot
+        // property's clean key. `getSlotPropName` prefers Figma's authoritative
+        // `componentPropertyReferences.mainComponent` binding (per the SlotNode docs)
+        // and falls back to the SLOT node's own `name` when that binding is absent —
+        // which is the common case in real files, where SLOTs typically only carry the
+        // `visible` binding to a separate BOOLEAN prop.
         const slotNodes: any[] =
           typeof defaultVariant.findAll === 'function'
             ? defaultVariant.findAll((n: any) => n.type === 'SLOT')
             : [];
         const slotNodeByName = new Map<string, any>();
         for (const sn of slotNodes) {
-          const cpRefs = sn.componentPropertyReferences || {};
-          const refKey = Object.values(cpRefs)[0] as string | undefined;
-          const key = refKey ? refKey.split('#')[0] : sn.name;
+          const key = getSlotPropName(sn);
+          if (!key) continue;
           if (!slotNodeByName.has(key)) slotNodeByName.set(key, sn);
+        }
+
+        // Soft signal when a declared slot property has no SLOT node we could match.
+        // This means either (a) the designer renamed the SLOT node away from the prop
+        // name without setting `cpRefs.mainComponent`, or (b) the default variant
+        // genuinely has no SLOT for this prop (rare but legal). Either way, downstream
+        // we'll emit zero default-child entries for the slot — surface it on the
+        // console so the designer can spot it.
+        for (const { slotName } of slotEntries) {
+          if (!slotNodeByName.has(slotName)) {
+            console.warn(
+              `[uSpec Extract] Slot property "${slotName}" has no matching SLOT node in the default variant — default-child instances (if any) will not appear in the classification UI.`
+            );
+          }
         }
 
         for (const { rawKey, slotName } of slotEntries) {
@@ -292,6 +313,11 @@ async function sendPreview(): Promise<void> {
               subCompSetId,
               topLevelInstanceId: `slot:${slotName}:pref:${pv.key}`,
               booleanOverrides: {},
+              // Slot-preferred entries describe a *referenced* component declared as a
+              // valid fill, not a *placed* instance. There is no instance to snapshot
+              // — leave `null`. Consumers that need the referenced component's defaults
+              // should read `propertyDefinitions.slots[].preferredInstances[]` instead.
+              componentProperties: null,
               subCompVariantAxes,
               classification: 'decorative',
               classificationReason: '',
@@ -361,6 +387,10 @@ async function sendPreview(): Promise<void> {
               subCompSetId,
               topLevelInstanceId: `slot:${slotName}:child:${j}:${c.id}`,
               booleanOverrides,
+              // Snapshot the placed instance's full typed property surface (booleans,
+              // instance-swaps, text, variant choices). The downstream renderer's
+              // referenced-component override table reads this exclusively.
+              componentProperties: snapshotComponentProperties(c),
               subCompVariantAxes,
               classification: 'decorative',
               classificationReason: '',
@@ -559,6 +589,17 @@ async function extract(
       if (uc.topLevelInstanceId && topLevelIds.has(uc.topLevelInstanceId)) continue;
       const prefKey = extractPrefKey(uc.topLevelInstanceId);
       const pref = prefKey ? prefByKey.get(prefKey) : null;
+      // Derive booleanOverrides from the round-tripped componentProperties snapshot when
+      // present (slot-default-child entries carry one; slot-preferred entries don't).
+      // Keeps the legacy field correct without re-reading the Figma node.
+      const derivedBooleans: Record<string, boolean> = {};
+      if (uc.componentProperties) {
+        for (const [k, vRaw] of Object.entries(uc.componentProperties)) {
+          if (vRaw && (vRaw as any).type === 'BOOLEAN') {
+            derivedBooleans[k] = Boolean((vRaw as any).value);
+          }
+        }
+      }
       mergedChildren.push({
         name: uc.name,
         mainComponentName: uc.mainComponentName,
@@ -566,12 +607,12 @@ async function extract(
         subCompSetId: uc.subCompSetId || (pref && pref.componentSetId) || null,
         topLevelInstanceId: uc.topLevelInstanceId,
         nodeType: uc.nodeType,
-        // `booleanOverrides` is instance-scoped (overrides applied in the parent's default
-        // variant). Slot-preferred entries describe a referenced component, not a placed
-        // instance, so overrides don't apply here — consumers that need the referenced
-        // component's default boolean values should read `propertyDefinitions.slots[].
-        // preferredInstances[].booleanDefaults`.
-        booleanOverrides: {},
+        // Booleans projected from the typed snapshot so the legacy field still reflects
+        // reality. Empty for slot-preferred (no placed instance).
+        booleanOverrides: derivedBooleans,
+        // The typed snapshot itself — single source of truth for the renderer's
+        // referenced-component override table. `null` for slot-preferred entries.
+        componentProperties: uc.componentProperties || null,
         // `subCompVariantAxes` describes the sub-component itself ("what axes does it
         // expose"), which is meaningful whether or not the component is placed. Mirror
         // from Phase A so Phase I will walk this child's variant cross-product when the

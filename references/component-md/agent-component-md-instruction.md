@@ -68,18 +68,24 @@ Read `_childComposition` (top-level key) from `{cachePath}/{componentSlug}-_base
 - **{child.name}** ({classification} {sub-component | component}) — {status line}
 ```
 
+**Display-name and slug helpers** (used by every bullet rule below and by the API "Referenced components" `####` block):
+
+- `displayName(child)` = `parentSetName` when `parentSetName` is non-empty AND differs from `mainComponentName`; otherwise `mainComponentName` if non-null; otherwise `name`. The reason for the `parentSetName` preference: when a referenced child is a variant of a COMPONENT_SET, Figma's `mainComponentName` is the variant identifier (e.g. `"layout=icon-only, size=small, color=default"`). That string is meaningful as a *configuration* but useless as a *component name*. `parentSetName` is the human-readable set name (`"action button"`).
+- `slug(child)` = `displayName(child)` lowercased with non-`[a-z0-9]` runs collapsed to `-` and any leading/trailing `-` trimmed.
+- `slotSuffix(child)` = `" (via slot **{child.slotName}**)"` when `child.origin` starts with `"slot-"` AND `child.slotName` is non-empty; otherwise the empty string. Surfaces that a referenced/constitutive entry lives inside a SLOT so the engineer can locate it in the parent's anatomy.
+
 **Per-child rendering rules**, in the order they appear in `children[]` (then `ambiguousChildren[]` at the end):
 
 - **Constitutive children (`classification === "constitutive"`):**
-  - If `subCompSetId` is non-null: `- **{name}** (constitutive sub-component) — documented inline; also has its own spec at \`./{slug}.md\` (when present).` Slug is `name` lowercased with non-`[a-z0-9]` runs collapsed to `-`.
-  - If `subCompSetId` is null: `- **{name}** (constitutive part) — documented inline in the API and Structure sections.`
+  - If `subCompSetId` is non-null: `- **{displayName}** (constitutive sub-component){slotSuffix} — documented inline; also has its own spec at \`./{slug}.md\` (when present).`
+  - If `subCompSetId` is null: `- **{name}** (constitutive part){slotSuffix} — documented inline in the API and Structure sections.`
 - **Referenced children (`classification === "referenced"`):**
-  - `- **{name}** (referenced — {mainComponentName}) — configured inline below; full spec at \`./{slug}.md\` (when present).`
+  - `- **{displayName}** (referenced — {mainComponentName}){slotSuffix} — configured inline below; full spec at \`./{slug}.md\` (when present).`
   - If the evidence set contains `"instance-swap-fill"`, append ` _Slot contract; consumer provides the concrete instance._`
 - **Decorative children (`classification === "decorative"`):**
-  - Do NOT emit a bullet. Decorative children surface naturally in Structure dimensions and Color tokens. Instead, append a single summary line **after all other bullets**: `- _Decorative children: {N} — documented inline in Structure and Color._` (only when decorative count ≥ 1).
+  - Do NOT emit a bullet. Decorative children surface naturally in Structure dimensions and Color tokens. Instead, append a single summary line **after all other bullets**: `- _Decorative children: {N} — documented inline in Structure and Color._` (only when decorative count ≥ 1). Count `origin === "top-level"` decoratives only — slot-origin entries never appear at the top level and are not part of this rollup.
 - **Ambiguous children (entries in `_childComposition.ambiguousChildren[]`, classification `null`):**
-  - `- **{name}** (classification ambiguous — defaulted to referenced) — review and resolve in a follow-up run.`
+  - `- **{displayName}** (classification ambiguous — defaulted to referenced){slotSuffix} — review and resolve in a follow-up run.`
 
 **Exact wording for the trailing sentence.** After all bullets, emit one blank line, then:
 
@@ -162,15 +168,24 @@ Read `api.data` (`ApiOverviewData`). Render in this exact order:
    - Description paragraph from `example.description`.
    - A fenced code block (`pseudocode` or bare fence) with the `example.code` string.
 5. **Referenced components** — one `###` sub-section titled `### Referenced components`, **only emitted** when `_base.json` (top-level) `_childComposition.children[]` contains at least one entry with `classification === "referenced"`. Placed immediately after the Configuration examples block (or after Sub-component tables if no configuration examples exist).
-   - One `####` sub-section per referenced child, in the order they appear in `children[]`:
-     - Heading: `#### {mainComponentName}` (fallback to `{name}` if `mainComponentName` is null).
-     - Lead paragraph, verbatim template:
+   - One `####` sub-section per referenced child, in the order they appear in `children[]`. Use the **`displayName(child)` and `slug(child)` helpers** defined in the Composition subsection (`parentSetName` preferred over `mainComponentName` when they differ — `mainComponentName` is a variant identifier for COMPONENT_SET children and is not a usable name).
+     - Heading: `#### {displayName}`.
+     - Lead paragraph. When `child.origin` starts with `"slot-"` AND `child.slotName` is non-empty, the slot relationship is folded into the first sentence as a participle clause so the engineer can locate the referenced component in the parent's anatomy without cross-referencing the API's slot table:
        ```
-       This component embeds an instance of **{mainComponentName}** (node `{subCompSetId}`, spec: `./{slug}.md`). It is configured with:
+       This component embeds an instance of **{displayName}** (node `{subCompSetId}`, spec: `./{slug}.md`) as the default fill of the **{slotName}** slot. It is configured with:
        ```
-       Slug is `mainComponentName` (or `name` when the main component is null) lowercased with non-`[a-z0-9]` runs collapsed to `-`.
-     - One Markdown table with columns `Prop passed to {mainComponentName} | Value in this context | Notes`, populated from the child's `booleanOverrides` (map boolean overrides to rows) and any `subCompVariantAxes` pinned in the parent's tree — one row per configured prop. If nothing is configured, emit a single row `| — | defaults | No overrides captured |`.
-     - Trailing paragraph, verbatim: `The full property surface of {mainComponentName} is documented in its own spec and is not repeated here.`
+       Otherwise (top-level placement, no slot context to surface):
+       ```
+       This component embeds an instance of **{displayName}** (node `{subCompSetId}`, spec: `./{slug}.md`). It is configured with:
+       ```
+     - One Markdown table with columns `Prop passed to {displayName} | Value in this context | Notes`. Populate one row per entry in `child.componentProperties` — a typed dict mirroring Figma's `InstanceNode.componentProperties` API shape exactly: `{ [propName]: { type: "BOOLEAN" | "INSTANCE_SWAP" | "TEXT" | "VARIANT", value: any } }`. The plugin captures every prop the placed instance exposes, including variant choices (which Figma exposes as one entry per axis with `type === "VARIANT"`). Format the `Value` cell by `type`:
+       - `BOOLEAN` → `true` or `false`.
+       - `INSTANCE_SWAP` → `(instance \`{value}\`)` where `{value}` is the node id string.
+       - `TEXT` → the literal string in backticks.
+       - `VARIANT` → the bare option (e.g. `icon-only`); add `"Variant axis on the placed instance."` to the `Notes` column.
+       - If `child.componentProperties` is absent or empty, emit a single row `| — | defaults | No overrides captured |`. Do **not** synthesize rows from `child.subCompVariantAxes` — that field lists *what axes the child exposes*, not what the parent's placement chose, and belongs in the referenced child's own spec.
+       - The legacy `child.booleanOverrides` field (value-only, booleans only) remains on every entry for backward compatibility with the first-guess heuristics, but is **not** the source of truth for this table. Read `componentProperties` exclusively.
+     - Trailing paragraph, verbatim: `The full property surface of {displayName} is documented in its own spec and is not repeated here.`
    - If the block follows from instance-swap children (evidence contains `"instance-swap-fill"`), prepend a single italic paragraph to the section body: `_Some entries below describe slot contracts: the parent declares the slot's required shape but does not own the concrete instance — each consumer passes a different one._`
 
 Rules:

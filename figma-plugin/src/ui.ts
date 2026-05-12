@@ -88,6 +88,10 @@ function triggerExtract(action: 'download' | 'copy'): void {
       parentSetName: c.parentSetName,
       subCompSetId: c.subCompSetId,
       nodeType: c.nodeType,
+      // Round-trip the typed snapshot back to the sandbox so the `extract` merge can
+      // attach it to slot-origin entries it appends to `_childComposition.children[]`.
+      // (Slot-origin entries skip buildFirstGuess where this would otherwise be set.)
+      componentProperties: c.componentProperties,
     }));
 
   post({
