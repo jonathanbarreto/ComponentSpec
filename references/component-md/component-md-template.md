@@ -39,6 +39,8 @@
 
 ## Structure
 
+{{ANATOMY_SCAFFOLD}}
+
 {{STRUCTURE_BODY}}
 
 ---

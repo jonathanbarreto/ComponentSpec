@@ -26,7 +26,7 @@ Each `data` object carries a `_extractionArtifacts` block that the renderer uses
 Two auxiliary artifacts produced by the orchestrator's Step 5 (`extract-api` projection) and Step 8.5 (reconciliation) are also consumed by the renderer:
 
 - `{cachePath}/{componentSlug}-api-dictionary.json` → `ApiDictionary` — canonical vocabulary; the renderer consults it only for state-name relabeling fallbacks (see Color Strategy B step 2).
-- `{cachePath}/{componentSlug}-reconciliations.json` → `{ autoReconciled[], retries[], unresolved[] }` — full log of every reconciliation action taken in Step 8.5. Drives the split Known-gaps block (see `## Known gaps`) and the per-section confidence headers' reconciliation counts. When the file is absent (standalone `create-component-md` run on a manually-authored cache set), treat every array as empty — the renderer must not hard-abort on missing reconciliation data.
+- `{cachePath}/{componentSlug}-reconciliations.json` → `{ autoReconciled[], retries[], unresolved[], reviewedBenign[] }` — full log of every reconciliation action taken in Step 8.5. `autoReconciled[]`, `retries[]`, and `unresolved[]` drive the split Known-gaps block (see `## Known gaps`) and the per-section confidence headers' reconciliation counts. `reviewedBenign[]` is an **audit-only** trail of benign `value-extra` dispositions (top-level booleans / decomposed states the dictionary's `axes[]` does not list) — the renderer MUST NOT surface it in Known gaps, the confidence headers, or anywhere else in the `.md`; it exists purely so a human can audit why a documented boolean state was not flagged. When the file is absent (standalone `create-component-md` run on a manually-authored cache set), treat every array as empty — the renderer must not hard-abort on missing reconciliation data.
 
 ## Placeholders
 
@@ -48,6 +48,7 @@ The template (`component-md/component-md-template.md`) uses `{{UPPER_SNAKE}}` pl
 | `{{FOLLOWUPS}}` | Optional next-step work block (see **Follow-ups**). Emit `_None._` when empty. NOT a defect list — describes optional, additive work like producing per-child canonical specs. | yes |
 | `{{CROSS_SECTION_INVARIANTS}}` | Observations that hold across sections (see **Cross-section invariants**) | yes |
 | `{{API_BODY}}` | Rendered API section (see **API body rendering**) | yes |
+| `{{ANATOMY_SCAFFOLD}}` | Compact layer-composition tree at the top of the Structure section (see **Anatomy scaffold**). Mechanical pass-through of `treeHierarchical`. | yes |
 | `{{STRUCTURE_BODY}}` | Rendered Structure section (see **Structure body rendering**) | yes |
 | `{{COLOR_BODY}}` | Rendered Color section (see **Color body rendering**) | yes |
 | `{{VOICE_BODY}}` | Rendered Voice section (see **Voice body rendering**) | yes |
@@ -96,6 +97,8 @@ _Classification produced by the uSpec Extract Figma plugin and reviewed at Step 
 ## Per-section confidence headers
 
 Every section body (API, Structure, Color, Voice) begins with a one-line **confidence header** that tells the engineer up-front which parts of that section are measured, inferred, not-measured, or missing — derived purely from signals already computed for the Known-gaps block. The header is emitted as a single italic paragraph immediately before the section's general notes (or, when no general notes exist, before the first sub-heading).
+
+**Structure section carve-out.** The Structure section is the one exception to "before the first sub-heading": the `### Anatomy` scaffold (`{{ANATOMY_SCAFFOLD}}`) is rendered by the template ahead of `{{STRUCTURE_BODY}}`, so it legitimately precedes the Structure confidence header. The confidence header is still the first line of `{{STRUCTURE_BODY}}` — it sits directly after the Anatomy block and before the Structure general notes. The Anatomy scaffold is orientation, not a measured sub-section, so it does not participate in or affect the confidence computation.
 
 ### Reconciliation tail (appended to every section's confidence header)
 
@@ -163,10 +166,10 @@ Read `api.data` (`ApiOverviewData`). Render in this exact order:
    - Optional description paragraph from `subComponentTable.description`.
    - When `_identityResolved === false`, add a second italic paragraph: `_The concrete component backing this role could not be resolved from Phase G's revealed walk. The role is known (boolean toggle / slot name) but the underlying component identity was not captured — see the Known gaps block for details._`
    - Table `Property | Type | Values | Default | Notes` populated the same way.
-4. **Configuration examples** — one `###` sub-section per entry in `data.configurationExamples`:
-   - Heading: `### {example.name}`.
-   - Description paragraph from `example.description`.
-   - A fenced code block (`pseudocode` or bare fence) with the `example.code` string.
+4. **Configuration examples** — one `###` sub-section per entry in `data.configurationExamples`. The `ConfigurationExample` shape (see `{{ref:api/agent-api-instruction.md}}` > Data Structure Reference) is `{ title, variantProperties, childOverrides?, textOverrides?, slotInsertions?, properties: ExampleProperty[] }` — there is **no** `name`, `description`, or `code` field. Render each example as:
+   - Heading: `### {example.title}`.
+   - A Markdown table with columns `Property | Value | Notes`, one row per entry in `example.properties[]` (each `ExampleProperty` is `{ property, value, notes }`). Render `value` verbatim (it already carries any quoting from the producer); use `notes` as-is (`"–"` when self-explanatory). When `example.properties` is absent or empty, skip the table and emit a single italic line `_No property-level overrides for this example._`.
+   - Do **not** render `variantProperties`, `childOverrides`, `textOverrides`, or `slotInsertions` as visible tables — those are Figma-preview wiring consumed by the `create-*` rendering skills, not engineer-facing API facts. If a text value shown in the table needs context, fold it into the row's `notes`. (The example table is the human-readable contract; the preview-wiring fields stay machine-only.)
 5. **Referenced components** — one `###` sub-section titled `### Referenced components`, **only emitted** when `_base.json` (top-level) `_childComposition.children[]` contains at least one entry with `classification === "referenced"`. Placed immediately after the Configuration examples block (or after Sub-component tables if no configuration examples exist).
    - One `####` sub-section per referenced child, in the order they appear in `children[]`. Use the **`displayName(child)` and `slug(child)` helpers** defined in the Composition subsection (`parentSetName` preferred over `mainComponentName` when they differ — `mainComponentName` is a variant identifier for COMPONENT_SET children and is not a usable name).
      - Heading: `#### {displayName}`.
@@ -194,6 +197,39 @@ Rules:
 - If `data.subComponentTables` is empty, skip section 3 entirely (do not emit a heading with no table).
 - If `data.configurationExamples` is empty, skip section 4 entirely.
 - If no referenced children exist in `_childComposition`, skip section 5 entirely. Never copy a referenced child's property table into section 2 (the Properties table) — the referenced child's own spec is the source of truth for its properties.
+
+## Anatomy scaffold (`{{ANATOMY_SCAFFOLD}}`)
+
+Emits a compact, machine-readable tree of the component's layer composition so an agent (or engineer) can grasp the parent→child nesting at a glance *before* reading the dimensional tables. It is **mechanical pass-through** of `_base.json.variants[<defaultVariantName>].treeHierarchical` — no interpretation, no measurements, no fabricated nodes. Rendered as a fenced ```` ```text ```` block under a `### Anatomy` heading. The template places `{{ANATOMY_SCAFFOLD}}` at the very top of the `## Structure` section, immediately before `{{STRUCTURE_BODY}}` (so the scaffold precedes the Structure confidence header — the map comes first, then the measured detail).
+
+**Source.** `_base.json.variants[<defaultVariantName>].treeHierarchical` — the same default-variant walk the renderer already loads for render-meta. The root of the scaffold is the component itself: render `component.componentName` followed by `(component set · {compSetNodeId})` when `component.isComponentSet` is true, else `(component · {compSetNodeId})`. The variant root node IS `treeHierarchical`; collapse it into the component root (do not emit its Figma variant short-name like `color=primary, …`). The root's children are `treeHierarchical.children[]`, rendered recursively.
+
+**Per-node line.** `{prefix}{name} ({nodeType} · {id}){tags}` where:
+- `prefix` — box-drawing tree indentation (`├─ ` for a middle child, `└─ ` for the last child) with `│  ` / `   ` continuation columns for ancestor levels. Standard for the node's depth and last-child position.
+- `name` — the node's `name`, verbatim. For a `TEXT` node whose `name` equals its `characters`, render the characters in quotes (`"Label"`) instead of duplicating the name. Never emit a variant short-name string (the variant root is collapsed into the component root, so its `color=…` name never appears).
+- `nodeType` — lower-cased (`frame`, `text`, `instance`, `component`, `vector`, …).
+- `id` — the node's `id`. Omit the ` · {id}` segment for `TEXT` leaf nodes and raw vectors (no addressable downstream role); keep it for **every** `FRAME` / `INSTANCE` / `COMPONENT` node (including nested INSTANCEs like `arrow_dot_right` — these are addressable and downstream skills may resolve them, so the id is required, not optional).
+- `tags` — a ` · `-joined suffix of **derivable** tags only, in this order:
+  1. **classification** — only top-level children carry this tag, because `_base.json._childComposition.children[]` classifies top-level children only. **Join key (deterministic):** each `_childComposition.children[]` entry carries `topLevelInstanceId: "idx:N"`. Parse the integer `N` and match it to the **Nth entry of `treeHierarchical.children[]`** (zero-based, in walk order) — that is the node this classification applies to. Append the entry's `classification` (`constitutive` / `referenced` / `decorative`) to that top-level node's line. Do NOT join on `name` (duplicate-named children would be ambiguous); the positional `idx:N` join is exact. If `topLevelInstanceId` is malformed or absent (legacy base), fall back to a unique `name` match among top-level children; if the name is non-unique, omit the tag rather than guess. Nodes below the top level never receive a classification tag.
+  2. **a11y-hidden** — a **best-effort, literal-only** tag. Append `a11y-hidden` only when some Voice `Do NOT` row (in `voice.data.states[].sections[].tables[].properties[]` where `property === "Do NOT"`) has a `value` **or** `notes` field that contains the node's exact `name` as a case-insensitive substring (e.g. a row noting "announce the arrow_dot_right icon" tags the `arrow_dot_right` node). When the Voice rows use generic phrasing that does not contain the layer name (e.g. "the decorative icon"), the tag is simply **omitted** — never infer hidden-ness from anything other than a literal name match. This keeps the tag deterministic: present iff a Voice Do-NOT row literally names the node.
+  Emit no `tags` suffix when none apply. Do NOT invent tags beyond these two — the scaffold is orientation, not a second spec.
+
+**Depth cap.** Define "node count" as the number of nodes in the `treeHierarchical` walk (the collapsed component root counts as the root at depth 0; its direct children are depth 1, and so on — `treeHierarchical` already stops at nested INSTANCEs, so instance-internal descendants are not counted). Render the full tree when that count is ≤ 40. Otherwise cap at depth 4 (render depths 0–4) and replace each elided deeper subtree with a single `… ({N} more nodes)` line at the cut depth, so the scaffold stays an orientation aid rather than a full layer dump.
+
+**Determinism.** Children preserve `treeHierarchical` order (the Figma walk order). Two runs against an identical `_base.json` produce a byte-identical scaffold.
+
+**Example** (sliding button):
+
+```text
+sliding button (component set · 12004:1183)
+├─ Label (frame · 12004:1074) · decorative
+│  └─ "Label" (text)
+└─ Thumb (frame · 12004:1076) · decorative
+   └─ Icon (frame · 12004:1077)
+      └─ arrow_dot_right (instance · 12004:1078) · a11y-hidden
+```
+
+(`Label` and `Thumb` get `decorative` because they are `treeHierarchical.children[0]` and `[1]`, matching `_childComposition.children[]` entries `topLevelInstanceId: "idx:0"` and `"idx:1"`. `arrow_dot_right` keeps its INSTANCE id and is tagged `a11y-hidden` because a Voice Do-NOT row literally names it.)
 
 ## Structure body rendering
 
@@ -600,6 +636,7 @@ Two `create-component-md` runs against an identical `_base.json` MUST produce by
 Before the orchestrator writes the final file, verify:
 
 - [ ] Every placeholder in the template has been substituted (search for `{{` remaining).
+- [ ] `{{ANATOMY_SCAFFOLD}}` is substituted with a `### Anatomy` heading followed by a single fenced ```` ```text ```` tree. The root line is the component name + `(component set · {compSetNodeId})` / `(component · {compSetNodeId})`. Every node line passes through a real `treeHierarchical` node (name + id verbatim, no variant short-names, no fabricated nodes). Tags are limited to `classification` (top-level `_childComposition` children only) and `a11y-hidden` (derived from Voice `Do NOT` rows). The tree honors the ≤40-node depth cap.
 - [ ] Every Markdown table is well-formed (same column count in header, separator, and every row).
 - [ ] Every `###` heading has a body — no dangling empty sub-sections.
 - [ ] Strategy A / Strategy B for color matches `color._extractionArtifacts.strategy`.

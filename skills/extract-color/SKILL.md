@@ -128,6 +128,8 @@ When your evidence (from `_base.json`'s color walk) contradicts the dictionary �
 }
 ```
 
+**`value-extra` guard — top-level booleans and decomposed states are NOT mismatches.** Before emitting a `value-extra`, resolve the observed item against the **full** dictionary, not just `axes[]`: check `axes[]`, `booleanProps[]`, `states[]` (by `figmaValue` or `apiAssignments` key), `subComponents[]`, and `slots[]`. A Disabled / Loading (etc.) section, column, or state that resolves to a `booleanProps[]` or `states[]` entry is part of the API surface — it is a **match**, so do NOT emit a `_dictionaryMismatch` for it. Only emit `value-extra` when the observed item resolves to NOTHING anywhere in the dictionary. (Booleans are deliberately excluded from `axes[]`; `booleanProps[]` is their canonical home — flagging an API boolean as `value-extra` was the systemic false-positive this guard removes.)
+
 Aggregate every mismatch into `data._extractionArtifacts.dictionaryMismatches[]`. The orchestrator's Step 8.5 reconciliation pass consumes this list to decide whether to auto-rewrite vocabulary, re-dispatch this skill with an expanded scope, or surface a semantic conflict.
 
 **Retry semantics — the orchestrator may re-dispatch this skill.**

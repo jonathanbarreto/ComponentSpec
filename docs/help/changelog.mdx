@@ -3,6 +3,26 @@ title: "Changelog"
 description: "Product updates and release history"
 ---
 
+<Update label="V2.5 — June 2026" description="Component Markdown specs now open the Structure section with an Anatomy layer tree, and the reconciliation pass stops flagging top-level booleans and decomposed states as false-positive gaps — shipping in uspec-skills 0.3.1">
+  ## uSpec V2.5
+
+  Two refinements to the [Component Markdown](/specs/component-md) pipeline. The generated `.md` now opens its Structure section with a compact **Anatomy** tree so you can read the component's layer nesting before the dimensional tables, and the reconciliation pass no longer reports top-level booleans (such as `isDisabled` or `isLoading`) or decomposed states as Known gaps. Both changes are deterministic and require no re-extraction.
+
+  ### Anatomy scaffold in the Structure section
+
+  - Every `components/{componentSlug}.md` now renders an `### Anatomy` block at the top of its Structure section — a compact, text-based tree of the component's parent→child layer composition
+  - The tree is a mechanical pass-through of the plugin's layer walk: real layer names and ids, no measurements and no inferred nodes. Top-level children carry their `constitutive` / `referenced` / `decorative` classification, and a layer named in a Voice "Do NOT announce" rule is tagged `a11y-hidden`
+  - It gives engineers and downstream LLMs an at-a-glance map of the component before they read the measured tables
+
+  ### Fewer false-positive Known gaps
+
+  - The reconciliation pass now recognizes that top-level booleans and Figma states decomposed into runtime conditions are part of the API surface, not unexplained extras. A documented Disabled or Loading section that traces back to a real boolean or state is treated as a **match**, not a gap
+  - `extract-api` now publishes a canonical `booleanProps[]` list in the API dictionary, giving the Structure, Color, and Voice specialists a name to reconcile against. Each specialist resolves an observed value against the full dictionary before flagging it
+  - Genuine semantic conflicts — a value that traces to nothing in the API or the design — are still surfaced as high-severity Known gaps. Only the systemic boolean false-positive is removed
+
+  Run `npx uspec-skills update` to pick up the skill changes (this release ships as `uspec-skills` 0.3.1). No action needed on Figma libraries or the uSpec Extract plugin.
+</Update>
+
 <Update label="V2.4 — June 2026" description="The uSpec Extract plugin launches on the Figma Community (no local build), the create-* render skills now consume the Component Markdown source of truth instead of re-extracting from Figma (require the .md, fail fast when missing, treat it as read-only), plus a hidden voice-render-meta focus-stop carry for create-voice — shipping in uspec-skills 0.3.0">
   ## uSpec V2.4
 
